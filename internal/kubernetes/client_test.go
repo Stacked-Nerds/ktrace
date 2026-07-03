@@ -13,11 +13,19 @@ func TestInClusterNamespaceFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	orig := inClusterNamespacePath
 	inClusterNamespacePath = path
 	t.Cleanup(func() { inClusterNamespacePath = defaultInClusterNamespacePath })
 
 	if got := inClusterNamespace(); got != "production" {
 		t.Fatalf("inClusterNamespace() = %q, want production", got)
+	}
+}
+
+func TestRestConfigExplicitKubeconfigDoesNotFallback(t *testing.T) {
+	_, err := restConfig(Options{
+		Kubeconfig: filepath.Join(t.TempDir(), "missing-kubeconfig"),
+	})
+	if err == nil {
+		t.Fatal("expected error for missing explicit kubeconfig")
 	}
 }

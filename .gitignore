@@ -1,12 +1,8 @@
 # Binaries
 /bin/
 /dist/
+/ktrace
 *.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-ktrace
 
 # Test
 *.test

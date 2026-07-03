@@ -47,6 +47,8 @@ func New(opts Options) (*Client, error) {
 }
 
 func restConfig(opts Options) (*rest.Config, error) {
+	explicit := opts.Kubeconfig != "" || opts.Context != ""
+
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if opts.Kubeconfig != "" {
 		loadingRules.ExplicitPath = opts.Kubeconfig
@@ -60,6 +62,8 @@ func restConfig(opts Options) (*rest.Config, error) {
 	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
 	if config, err := clientConfig.ClientConfig(); err == nil {
 		return config, nil
+	} else if explicit {
+		return nil, fmt.Errorf("load kubeconfig: %w", err)
 	}
 
 	config, err := rest.InClusterConfig()
@@ -76,6 +80,8 @@ func NewFromClientset(cs kubernetes.Interface) *Client {
 
 // DefaultNamespace returns the namespace from kubeconfig or the in-cluster service account.
 func DefaultNamespace(opts Options) (string, error) {
+	explicit := opts.Kubeconfig != "" || opts.Context != ""
+
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if opts.Kubeconfig != "" {
 		loadingRules.ExplicitPath = opts.Kubeconfig
@@ -89,6 +95,8 @@ func DefaultNamespace(opts Options) (string, error) {
 	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
 	if ns, _, err := clientConfig.Namespace(); err == nil && ns != "" {
 		return ns, nil
+	} else if explicit {
+		return "", fmt.Errorf("resolve default namespace from kubeconfig: %w", err)
 	}
 
 	if ns := inClusterNamespace(); ns != "" {

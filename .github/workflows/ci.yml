@@ -15,14 +15,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify source layout
+        run: test -f cmd/ktrace/main.go
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.4"
           cache: true
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Tidy and download dependencies
+        run: |
+          go mod tidy
+          go mod download
 
       - name: Run tests
         run: go test -race ./...

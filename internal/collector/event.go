@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/Stacked-Nerds/ktrace/internal/kubernetes"
 	"github.com/Stacked-Nerds/ktrace/pkg/models"
@@ -28,7 +29,7 @@ func (c *eventCollector) Collect(ctx context.Context, client *kubernetes.Client,
 func (c *eventCollector) collectForGraph(ctx context.Context, client *kubernetes.Client, namespace string, graph *models.ResourceGraph) ([]models.TimelineEvent, error) {
 	fieldSelectors := buildInvolvedObjectSelectors(graph)
 	if len(fieldSelectors) == 0 && graph != nil && graph.Root.Name != "" {
-		fieldSelectors = []string{fmt.Sprintf("involvedObject.name=%s", graph.Root.Name)}
+		fieldSelectors = []string{buildFieldSelector(graph.Root.Kind, graph.Root.Name, graph.Root.Namespace)}
 	}
 
 	seen := make(map[string]bool)
@@ -41,14 +42,26 @@ func (c *eventCollector) collectForGraph(ctx context.Context, client *kubernetes
 				FieldSelector: fieldSelector,
 			})
 			if err != nil {
+				if isOptionalNamespaceEventError(ns, namespace, err) {
+					continue
+				}
 				return nil, fmt.Errorf("list events in namespace %q: %w", ns, err)
 			}
-			appendEvents(&timeline, seen, list.Items)
+			for i := range list.Items {
+				ev := &list.Items[i]
+				if graph != nil && !matchesGraphEvent(ev, graph, graphUIDs(graph)) {
+					continue
+				}
+				appendEvent(&timeline, seen, ev)
+			}
 		}
 
 		if graph != nil && len(graph.Resources) > 0 {
 			list, err := client.Clientset.CoreV1().Events(ns).List(ctx, metav1.ListOptions{})
 			if err != nil {
+				if isOptionalNamespaceEventError(ns, namespace, err) {
+					continue
+				}
 				return nil, fmt.Errorf("list namespace events in %q: %w", ns, err)
 			}
 
@@ -66,6 +79,15 @@ func (c *eventCollector) collectForGraph(ctx context.Context, client *kubernetes
 	return timeline, nil
 }
 
+// isOptionalNamespaceEventError reports whether an events list failure in the
+// default namespace can be skipped (supplemental cluster-scoped event lookup).
+func isOptionalNamespaceEventError(ns, workloadNamespace string, err error) bool {
+	if ns == workloadNamespace || ns != metav1.NamespaceDefault {
+		return false
+	}
+	return errors.IsForbidden(err) || errors.IsNotFound(err) || errors.IsUnauthorized(err)
+}
+
 // eventNamespaces returns namespaces to search for events. Cluster-scoped object
 // events (Node, PersistentVolume) are stored in the default namespace.
 func eventNamespaces(workloadNamespace string, graph *models.ResourceGraph) []string {
@@ -79,12 +101,6 @@ func eventNamespaces(workloadNamespace string, graph *models.ResourceGraph) []st
 		namespaces = append(namespaces, metav1.NamespaceDefault)
 	}
 	return namespaces
-}
-
-func appendEvents(timeline *[]models.TimelineEvent, seen map[string]bool, events []corev1.Event) {
-	for i := range events {
-		appendEvent(timeline, seen, &events[i])
-	}
 }
 
 func appendEvent(timeline *[]models.TimelineEvent, seen map[string]bool, ev *corev1.Event) {
@@ -130,16 +146,27 @@ func eventTimestamp(ev *corev1.Event) time.Time {
 	return ev.CreationTimestamp.Time
 }
 
+func buildFieldSelector(kind, name, namespace string) string {
+	if namespace != "" {
+		return fmt.Sprintf("involvedObject.kind=%s,involvedObject.name=%s,involvedObject.namespace=%s", kind, name, namespace)
+	}
+	return fmt.Sprintf("involvedObject.kind=%s,involvedObject.name=%s", kind, name)
+}
+
 func buildInvolvedObjectSelectors(graph *models.ResourceGraph) []string {
 	if graph == nil {
 		return nil
 	}
+	seen := make(map[string]bool)
 	selectors := make([]string, 0)
 	for _, resources := range graph.Resources {
 		for _, r := range resources {
-			if r.Ref.Name != "" {
-				selectors = append(selectors, fmt.Sprintf("involvedObject.name=%s", r.Ref.Name))
+			sel := buildFieldSelector(r.Ref.Kind, r.Ref.Name, r.Ref.Namespace)
+			if seen[sel] {
+				continue
 			}
+			seen[sel] = true
+			selectors = append(selectors, sel)
 		}
 	}
 	return selectors
@@ -163,13 +190,50 @@ func matchesGraphEvent(ev *corev1.Event, graph *models.ResourceGraph, uids map[s
 	}
 	for _, resources := range graph.Resources {
 		for _, r := range resources {
-			if r.Ref.Kind == ev.InvolvedObject.Kind && r.Ref.Name == ev.InvolvedObject.Name {
+			if resourceMatchesInvolvedObject(r.Ref, ev.InvolvedObject) {
 				return true
 			}
 		}
 	}
-	if graph.Root.Kind == ev.InvolvedObject.Kind && graph.Root.Name == ev.InvolvedObject.Name {
-		return true
+	return resourceMatchesInvolvedObject(graph.Root, ev.InvolvedObject)
+}
+
+func resourceMatchesInvolvedObject(ref models.ResourceRef, obj corev1.ObjectReference) bool {
+	if ref.Kind != obj.Kind || ref.Name != obj.Name {
+		return false
 	}
-	return false
+	return normalizeResourceNamespace(ref.Kind, ref.Namespace) ==
+		normalizeInvolvedObjectNamespace(obj.Kind, obj.Namespace)
+}
+
+// normalizeInvolvedObjectNamespace maps API event involvedObject namespaces to a
+// canonical form. Kubernetes often omits namespace on events for default-namespace
+// resources; cluster-scoped object events may use an empty or "default" namespace.
+func normalizeInvolvedObjectNamespace(kind, namespace string) string {
+	if isClusterScopedKind(kind) {
+		if namespace == metav1.NamespaceDefault {
+			return ""
+		}
+		return namespace
+	}
+	if namespace == "" {
+		return metav1.NamespaceDefault
+	}
+	return namespace
+}
+
+func normalizeResourceNamespace(kind, namespace string) string {
+	if isClusterScopedKind(kind) {
+		return ""
+	}
+	return namespace
+}
+
+func isClusterScopedKind(kind string) bool {
+	switch kind {
+	case "Node", "PersistentVolume", "Namespace", "StorageClass":
+		return true
+	default:
+		return false
+	}
 }

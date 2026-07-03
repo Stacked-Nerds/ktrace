@@ -20,6 +20,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify source layout
+        run: test -f cmd/ktrace/main.go
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
