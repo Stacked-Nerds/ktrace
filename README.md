@@ -2,17 +2,15 @@
 
 **Understand the story behind your Kubernetes resources.**
 
-ktrace is a Kubernetes CLI that collects related resources, correlates them into a timeline, and explains why workloads are failing — so you don't have to run a dozen `kubectl` commands to find the root cause.
+ktrace collects related Kubernetes resources, builds a chronological timeline, detects failure conditions, and explains the most likely root cause — so you don't have to run a dozen `kubectl` commands.
 
 ## Status
 
-**Phase 1** — Resource collection and CLI foundation. Timeline rendering and root-cause analysis arrive in Phase 2.
+**Phase 2** — Timeline, failure analysis, root-cause detection, and actionable recommendations.
 
 ## Quick Start
 
 ### Docker (recommended)
-
-Pre-built images are published to GHCR on every push to `main`:
 
 ```bash
 docker pull ghcr.io/stacked-nerds/ktrace:latest
@@ -23,52 +21,51 @@ docker run --rm \
   deployment frontend -n production
 ```
 
-See [examples/docker/README.md](examples/docker/README.md) for in-cluster Job usage and RBAC notes.
+See [examples/docker/README.md](examples/docker/README.md) for in-cluster usage.
 
 ### Build from source
 
-**Prerequisites:** Go 1.26+, `kubectl` configured, Kubernetes 1.33–1.36 (client-go v0.36)
+**Prerequisites:** Go 1.26+, `kubectl` configured, Kubernetes 1.33–1.36
 
 ```bash
 go install github.com/Stacked-Nerds/ktrace/cmd/ktrace@latest
 ```
 
-Or clone and build:
-
-```bash
-git clone https://github.com/Stacked-Nerds/ktrace.git
-cd ktrace
-make build
-./bin/ktrace deployment frontend
-```
-
 ## Usage
 
 ```bash
-# Trace a deployment (default namespace from kubeconfig)
-ktrace deployment frontend
+# Trace a deployment with root-cause analysis
+ktrace deployment frontend -n production
 
-# Trace a pod in a specific namespace
-ktrace pod nginx -n production
+# Verbose output with full explanations
+ktrace deployment frontend -n production -v
 
-# Trace a namespace (bounded collection)
-ktrace namespace production
-
-# Output full collected resource graph as JSON
+# Full structured JSON (graph, timeline, findings, root cause)
 ktrace deployment frontend --json
 
-# Use a specific kubeconfig or context
-ktrace deployment frontend --kubeconfig ~/.kube/config --context prod
+# Include collected resource counts
+ktrace pod nginx -n production --show-collected
 ```
 
-### Supported root resource types (Phase 1)
+### Flags
 
-| Type | Description |
+| Flag | Description |
 |------|-------------|
-| `deployment` | Full ownership chain: Deployment → ReplicaSet → Pod → Events → PVC → PV → Node → Service |
-| `replicaset` | ReplicaSet → Pod → related resources |
-| `pod` | Pod → PVC, PV, Node, Events, Services |
-| `namespace` | Namespace + bounded Deployments/Pods |
+| `-n, --namespace` | Target namespace |
+| `--kubeconfig` | Path to kubeconfig |
+| `--context` | Kubeconfig context |
+| `--json` | Export full `TraceResult` as JSON |
+| `-v, --verbose` | Detailed explanations and all recommendations |
+| `--show-collected` | Show collected resource counts |
+
+### Detected failure conditions
+
+- ImagePullBackOff / ErrImagePull
+- CrashLoopBackOff / OOMKilled
+- FailedScheduling
+- PVC Pending / FailedMount / ProvisioningFailed
+- Node NotReady
+- Deployment unavailable / not progressing
 
 ## Example Output
 
@@ -76,42 +73,45 @@ ktrace deployment frontend --kubeconfig ~/.kube/config --context prod
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 Deployment: frontend
 Namespace: production
+Status: Failed
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Collected:
-  ReplicaSets:  2
-  Pods:         3
-  Events:       12
-  PVCs:         1
-  PVs:          1
-  Nodes:        2
-  Services:     1
-  Deployments:  1
+Critical Issues:
+  [HIGH] [PVCPending] persistentvolumeclaim/data — PVC "data" is pending
+  [HIGH] [FailedMount] pod/frontend-abc — Unable to attach volume
 
-Recent Events:
-  10:45  Warning  FailedMount  pod/frontend-abc  Unable to attach volume...
+Timeline:
+  10:42  Deployment created — frontend
+  10:42  ReplicaSet created — frontend-rs
+  10:43  Pod created — frontend-abc
+  10:44  FailedMount — Unable to attach volume
+  10:45  CrashLoopBackOff — back-off restarting failed container
 
-(Timeline and root cause analysis coming in Phase 2)
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+Root Cause
+PVC "data" is pending
+StorageClass "longhorn" may be missing or unable to provision volume
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+Recommendation
+  kubectl get storageclass
+  kubectl describe pvc data -n production
+  kubectl describe pod frontend-abc -n production
 ```
 
 ## Development
 
 ```bash
-make test    # run tests with race detector
-make vet     # go vet
-make lint    # golangci-lint
-make build   # build binary to bin/ktrace
+make test
+make build
 ```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 ## Architecture
 
-See [docs/Architecture.md](docs/Architecture.md) for package layout and design.
+See [docs/Architecture.md](docs/Architecture.md).
 
 ## Roadmap
 
-See [docs/Roadmap.md](docs/Roadmap.md) for planned features.
+See [docs/Roadmap.md](docs/Roadmap.md).
 
 ## License
 

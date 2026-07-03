@@ -9,13 +9,15 @@ import (
 	ktraceerrors "github.com/Stacked-Nerds/ktrace/pkg/errors"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 var (
-	kubeconfig  string
-	kubeContext string
-	namespace   string
-	jsonOutput  bool
+	kubeconfig    string
+	kubeContext   string
+	namespace     string
+	jsonOutput    bool
+	verbose       bool
+	showCollected bool
 )
 
 // Execute runs the ktrace CLI.
@@ -28,13 +30,13 @@ func newRootCmd() *cobra.Command {
 		Use:   "ktrace [resource-type] [name]",
 		Short: "Understand the story behind your Kubernetes resources",
 		Long: `ktrace collects related Kubernetes resources, builds a chronological
-timeline, and explains why resources are failing.
+timeline, detects failure conditions, and explains the most likely root cause.
 
 Examples:
   ktrace deployment frontend
   ktrace pod nginx -n production
-  ktrace namespace production
-  ktrace deployment frontend --json`,
+  ktrace deployment frontend --json
+  ktrace deployment frontend -v --show-collected`,
 		Version: version,
 		Args:    cobra.ExactArgs(2),
 		RunE:    runTrace,
@@ -46,7 +48,9 @@ Examples:
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Kubernetes namespace")
 	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file")
 	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context name")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output collected resource graph as JSON")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output full trace result as JSON")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed explanations and all recommendations")
+	cmd.Flags().BoolVar(&showCollected, "show-collected", false, "Include collected resource counts")
 
 	return cmd
 }
@@ -64,15 +68,15 @@ func runTrace(cmd *cobra.Command, args []string) error {
 		ns = defaultNS
 	}
 
-	graph, err := collect(kind, name, ns)
+	result, err := trace(kind, name, ns)
 	if err != nil {
 		return handleError(err)
 	}
 
 	if jsonOutput {
-		return writeJSON(cmd.OutOrStdout(), graph)
+		return writeJSON(cmd.OutOrStdout(), result)
 	}
-	return writeSummary(cmd.OutOrStdout(), graph)
+	return writeReport(cmd.OutOrStdout(), result)
 }
 
 func handleError(err error) error {

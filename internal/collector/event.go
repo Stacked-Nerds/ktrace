@@ -27,17 +27,36 @@ func (c *eventCollector) Collect(ctx context.Context, client *kubernetes.Client,
 }
 
 func (c *eventCollector) collectForGraph(ctx context.Context, client *kubernetes.Client, namespace string, graph *models.ResourceGraph) ([]models.TimelineEvent, error) {
-	fieldSelectors := buildInvolvedObjectSelectors(graph)
-	if len(fieldSelectors) == 0 && graph != nil && graph.Root.Name != "" {
-		fieldSelectors = []string{buildFieldSelector(graph.Root.Kind, graph.Root.Name, graph.Root.Namespace)}
-	}
-
 	seen := make(map[string]bool)
 	timeline := make([]models.TimelineEvent, 0)
 
 	namespaces := eventNamespaces(namespace, graph)
 	for _, ns := range namespaces {
-		for _, fieldSelector := range fieldSelectors {
+		if graph != nil && len(graph.Resources) > 0 {
+			targetUIDs := graphUIDs(graph)
+			items, err := listAllEvents(ctx, client, ns, metav1.ListOptions{})
+			if err != nil {
+				if isOptionalNamespaceEventError(ns, namespace, err) {
+					continue
+				}
+				return nil, fmt.Errorf("list namespace events in %q: %w", ns, err)
+			}
+			for i := range items {
+				ev := &items[i]
+				if !matchesGraphEvent(ev, graph, targetUIDs) {
+					continue
+				}
+				appendEvent(&timeline, seen, ev)
+			}
+			continue
+		}
+
+		// Minimal graph: use targeted field selectors for the root resource.
+		selectors := []string{}
+		if graph != nil && graph.Root.Name != "" {
+			selectors = []string{buildFieldSelector(graph.Root.Kind, graph.Root.Name, graph.Root.Namespace)}
+		}
+		for _, fieldSelector := range selectors {
 			list, err := client.Clientset.CoreV1().Events(ns).List(ctx, metav1.ListOptions{
 				FieldSelector: fieldSelector,
 			})
@@ -48,35 +67,29 @@ func (c *eventCollector) collectForGraph(ctx context.Context, client *kubernetes
 				return nil, fmt.Errorf("list events in namespace %q: %w", ns, err)
 			}
 			for i := range list.Items {
-				ev := &list.Items[i]
-				if graph != nil && !matchesGraphEvent(ev, graph, graphUIDs(graph)) {
-					continue
-				}
-				appendEvent(&timeline, seen, ev)
-			}
-		}
-
-		if graph != nil && len(graph.Resources) > 0 {
-			list, err := client.Clientset.CoreV1().Events(ns).List(ctx, metav1.ListOptions{})
-			if err != nil {
-				if isOptionalNamespaceEventError(ns, namespace, err) {
-					continue
-				}
-				return nil, fmt.Errorf("list namespace events in %q: %w", ns, err)
-			}
-
-			targetUIDs := graphUIDs(graph)
-			for i := range list.Items {
-				ev := &list.Items[i]
-				if !matchesGraphEvent(ev, graph, targetUIDs) {
-					continue
-				}
-				appendEvent(&timeline, seen, ev)
+				appendEvent(&timeline, seen, &list.Items[i])
 			}
 		}
 	}
 
 	return timeline, nil
+}
+
+// listAllEvents pages through all events in a namespace.
+func listAllEvents(ctx context.Context, client *kubernetes.Client, ns string, opts metav1.ListOptions) ([]corev1.Event, error) {
+	all := make([]corev1.Event, 0)
+	for {
+		list, err := client.Clientset.CoreV1().Events(ns).List(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, list.Items...)
+		if list.Continue == "" {
+			break
+		}
+		opts.Continue = list.Continue
+	}
+	return all, nil
 }
 
 // isOptionalNamespaceEventError reports whether an events list failure in the
@@ -151,25 +164,6 @@ func buildFieldSelector(kind, name, namespace string) string {
 		return fmt.Sprintf("involvedObject.kind=%s,involvedObject.name=%s,involvedObject.namespace=%s", kind, name, namespace)
 	}
 	return fmt.Sprintf("involvedObject.kind=%s,involvedObject.name=%s", kind, name)
-}
-
-func buildInvolvedObjectSelectors(graph *models.ResourceGraph) []string {
-	if graph == nil {
-		return nil
-	}
-	seen := make(map[string]bool)
-	selectors := make([]string, 0)
-	for _, resources := range graph.Resources {
-		for _, r := range resources {
-			sel := buildFieldSelector(r.Ref.Kind, r.Ref.Name, r.Ref.Namespace)
-			if seen[sel] {
-				continue
-			}
-			seen[sel] = true
-			selectors = append(selectors, sel)
-		}
-	}
-	return selectors
 }
 
 func graphUIDs(graph *models.ResourceGraph) map[string]bool {

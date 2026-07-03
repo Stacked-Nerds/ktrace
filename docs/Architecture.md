@@ -14,27 +14,27 @@ Phase 1 focuses on **resource collection** — gathering all related objects fro
 
 ## Package Map
 
-### Current (Phase 1)
+### Current (Phase 2)
 
 | Package | Responsibility |
 |---------|----------------|
 | `cmd/ktrace` | CLI entrypoint |
-| `internal/cli` | Cobra commands, flags, human summary and JSON output |
-| `internal/kubernetes` | REST config loading, clientset wrapper |
-| `internal/collector` | Per-kind collectors and orchestrator graph walk |
-| `pkg/models` | Domain types: `ResourceRef`, `ResourceGraph`, `TimelineEvent` |
-| `pkg/errors` | Typed errors for CLI exit codes |
-| `pkg/utils` | Kind normalization, label selector matching, string helpers |
+| `internal/cli` | Cobra commands and flags |
+| `internal/engine` | Analysis pipeline orchestration |
+| `internal/collector` | Resource collectors and graph walk |
+| `internal/correlator` | Explicit resource edges |
+| `internal/timeline` | Chronological timeline builder |
+| `internal/analyzer` | Modular failure detection rules |
+| `internal/explain` | Root-cause selection and status |
+| `internal/renderer/console` | Human-readable report output |
+| `internal/kubernetes` | Kubernetes client wrapper |
+| `pkg/models` | Domain types including `TraceResult` |
 
-### Planned (Phase 2+)
+### Planned (Phase 3+)
 
 | Package | Responsibility |
 |---------|----------------|
-| `internal/correlator` | Link resources with explicit edges and relations |
-| `internal/analyzer` | Modular failure detection rules |
-| `internal/timeline` | Build sorted, deduplicated timeline from graph |
-| `internal/explain` | Root-cause synthesis from analyzer results |
-| `internal/renderer` | Console, JSON, Markdown, HTML output |
+| `internal/renderer` | Markdown, HTML output |
 | `internal/cache` | Optional collection cache |
 | `internal/exporter` | PDF, Slack, GitHub Actions export |
 

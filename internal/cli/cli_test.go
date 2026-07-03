@@ -11,43 +11,45 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/Stacked-Nerds/ktrace/internal/collector"
+	"github.com/Stacked-Nerds/ktrace/internal/engine"
 	"github.com/Stacked-Nerds/ktrace/internal/kubernetes"
+	"github.com/Stacked-Nerds/ktrace/internal/renderer/console"
 	"github.com/Stacked-Nerds/ktrace/pkg/models"
 )
 
-func TestWriteSummary(t *testing.T) {
-	graph := models.NewResourceGraph(models.ResourceRef{
+func TestWriteReport(t *testing.T) {
+	result := engine.Analyze(models.NewResourceGraph(models.ResourceRef{
 		Kind: "Deployment", Name: "frontend", Namespace: "default",
-	})
-	graph.AddResource(models.CollectedResource{Ref: models.ResourceRef{Kind: "Pod", Name: "p1"}})
+	}))
 
 	var buf bytes.Buffer
-	if err := writeSummary(&buf, graph); err != nil {
-		t.Fatalf("writeSummary() error: %v", err)
+	if err := writeReport(&buf, result); err != nil {
+		t.Fatalf("writeReport() error: %v", err)
 	}
 	out := buf.String()
 	if !strings.Contains(out, "Deployment: frontend") {
-		t.Errorf("summary missing deployment header: %s", out)
+		t.Errorf("report missing deployment header: %s", out)
 	}
-	if !strings.Contains(out, "Phase 2") {
-		t.Errorf("summary missing phase 2 note: %s", out)
+	if !strings.Contains(out, "Status:") {
+		t.Errorf("report missing status: %s", out)
 	}
 }
 
 func TestWriteJSON(t *testing.T) {
-	graph := models.NewResourceGraph(models.ResourceRef{
-		Kind: "Pod", Name: "nginx", Namespace: "default",
-	})
+	result := &models.TraceResult{
+		Root:   models.ResourceRef{Kind: "Pod", Name: "nginx", Namespace: "default"},
+		Status: models.StatusHealthy,
+	}
 	var buf bytes.Buffer
-	if err := writeJSON(&buf, graph); err != nil {
+	if err := writeJSON(&buf, result); err != nil {
 		t.Fatalf("writeJSON() error: %v", err)
 	}
-	if !strings.Contains(buf.String(), `"kind": "Pod"`) {
-		t.Errorf("json output missing root kind: %s", buf.String())
+	if !strings.Contains(buf.String(), `"status": "Healthy"`) {
+		t.Errorf("json output missing status: %s", buf.String())
 	}
 }
 
-func TestCollectWithFakeClient(t *testing.T) {
+func TestTraceWithFakeClient(t *testing.T) {
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "default", UID: "d1"},
 	}
@@ -65,12 +67,12 @@ func TestCollectWithFakeClient(t *testing.T) {
 	}
 	newOrchestratorFn = collector.NewOrchestrator
 
-	graph, err := collect("deployment", "frontend", "default")
+	result, err := trace("deployment", "frontend", "default")
 	if err != nil {
-		t.Fatalf("collect() error: %v", err)
+		t.Fatalf("trace() error: %v", err)
 	}
-	if graph.Root.Name != "frontend" {
-		t.Errorf("unexpected root name: %s", graph.Root.Name)
+	if result.Root.Name != "frontend" {
+		t.Errorf("unexpected root name: %s", result.Root.Name)
 	}
 }
 
@@ -84,5 +86,35 @@ func TestRootCommandHelp(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "deployment frontend") {
 		t.Error("help text missing example")
+	}
+}
+
+func TestConsoleRenderWithFinding(t *testing.T) {
+	result := &models.TraceResult{
+		Root:   models.ResourceRef{Kind: "Pod", Name: "app", Namespace: "default"},
+		Status: models.StatusFailed,
+		Findings: []models.Finding{{
+			Severity:  models.SeverityHigh,
+			Condition: "CrashLoopBackOff",
+			Summary:   "Container crash looping",
+			Source:    models.ResourceRef{Kind: "Pod", Name: "app", Namespace: "default"},
+			Recommendations: []string{
+				"kubectl logs app -n default",
+			},
+		}},
+		RootCause: &models.Finding{
+			Severity: models.SeverityHigh,
+			Summary:  "Container crash looping",
+		},
+		Timeline: []models.TimelineEntry{{
+			Title: "CrashLoopBackOff",
+		}},
+	}
+	var buf bytes.Buffer
+	if err := console.Render(&buf, result, console.DefaultOptions()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "Root Cause") {
+		t.Fatal("expected root cause section")
 	}
 }

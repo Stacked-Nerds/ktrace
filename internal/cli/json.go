@@ -7,8 +7,8 @@ import (
 	"github.com/Stacked-Nerds/ktrace/pkg/models"
 )
 
-func writeJSON(w io.Writer, graph *models.ResourceGraph) error {
+func writeJSON(w io.Writer, result *models.TraceResult) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(graph)
+	return enc.Encode(result)
 }

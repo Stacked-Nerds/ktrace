@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -93,10 +94,23 @@ func collectRelatedFromPods(ctx context.Context, client *kubernetes.Client, name
 		}
 	}
 
-	if err := collectPVCs(ctx, client, namespace, pvcNames, state); err != nil {
-		return err
+	var wg sync.WaitGroup
+	var pvcErr, nodeErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		pvcErr = collectPVCs(ctx, client, namespace, pvcNames, state)
+	}()
+	go func() {
+		defer wg.Done()
+		nodeErr = collectNodes(ctx, client, nodeNames, state)
+	}()
+	wg.Wait()
+
+	if pvcErr != nil {
+		return pvcErr
 	}
-	return collectNodes(ctx, client, nodeNames, state)
+	return nodeErr
 }
 
 func decodeRaw(raw []byte, obj interface{}) error {

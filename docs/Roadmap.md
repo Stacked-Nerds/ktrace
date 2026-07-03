@@ -1,6 +1,6 @@
 # ktrace Roadmap
 
-## Phase 1 — Foundation (current)
+## Phase 1 — Foundation (complete)
 
 - [x] Repository structure and Go module
 - [x] Cobra CLI with namespace/kubeconfig/context flags
@@ -11,13 +11,14 @@
 - [x] Unit tests and benchmarks
 - [x] CI (test, vet, golangci-lint)
 - [x] Documentation
+- [x] Docker image publish to GHCR
 
-## Phase 2 — Timeline and Analysis
+## Phase 2 — Timeline and Analysis (complete)
 
-- [ ] Correlator with explicit resource edges
-- [ ] Timeline builder (sorted, deduplicated, human-readable)
-- [ ] Console renderer (formalized from CLI output)
-- [ ] Basic analyzers:
+- [x] Correlator with explicit resource edges
+- [x] Timeline builder (sorted, deduplicated, human-readable)
+- [x] Console renderer (status, issues, timeline, root cause, recommendations)
+- [x] Basic analyzers:
   - ImagePullBackOff / ErrImagePull
   - CrashLoopBackOff
   - OOMKilled
@@ -25,11 +26,14 @@
   - PVC Pending
   - Mount failures
   - Node NotReady
-- [ ] Root-cause summary and recommended `kubectl` commands
+  - Deployment condition failures
+- [x] Root-cause summary and recommended `kubectl` commands
+- [x] Parallel PVC/Node collection
+- [x] Reduced event API calls (single list per namespace)
 
 ## Phase 3 — Output Formats
 
-- [ ] JSON renderer (structured analysis output)
+- [ ] Structured JSON analysis schema (partial — `--json` exports TraceResult)
 - [ ] Markdown renderer (`--markdown`)
 - [ ] HTML renderer (`--html`)
 - [ ] Additional analyzers:
@@ -38,8 +42,6 @@
   - Missing Secret / ConfigMap
 
 ## Future
-
-These are not planned for immediate implementation but the architecture supports them:
 
 - Interactive TUI
 - Web UI
@@ -54,4 +56,4 @@ These are not planned for immediate implementation but the architecture supports
 
 ## Versioning
 
-ktrace follows semantic versioning. Phase 1 ships as **v0.1.0** — API and output format may change until v1.0.
+**v0.2.0** — Phase 2: timeline, analyzers, root-cause analysis.
