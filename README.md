@@ -8,28 +8,34 @@ ktrace collects related Kubernetes resources, builds a chronological timeline, d
 
 **Phase 2** — Timeline, failure analysis, root-cause detection, and actionable recommendations.
 
-## Quick Start
+## Installation
 
-### Docker (recommended)
+| Method | Command |
+|--------|---------|
+| **Go install** | `go install github.com/Stacked-Nerds/ktrace/cmd/ktrace@latest` |
+| **Release binary** | [GitHub Releases](https://github.com/Stacked-Nerds/ktrace/releases) → add to `PATH` |
+| **Build from source** | `make build` → `./bin/ktrace` |
+| **Docker** | `docker pull ghcr.io/stacked-nerds/ktrace:latest` |
+| **In-cluster Job** | See [examples/docker/README.md](examples/docker/README.md) |
+
+Full setup for each method (k3s, kubeconfig, RBAC): **[docs/Installation.md](docs/Installation.md)**
+
+Connection errors include hints tailored to how you installed ktrace (binary, Docker, or in-cluster).
+
+### Quick start — binary
 
 ```bash
-docker pull ghcr.io/stacked-nerds/ktrace:latest
-
-docker run --rm \
-  -v "$HOME/.kube:/home/ktrace/.kube:ro" \
-  -e KUBECONFIG=/home/ktrace/.kube/config \
-  ghcr.io/stacked-nerds/ktrace:latest \
-  deployment frontend -n production
+kubectl cluster-info   # verify cluster access
+ktrace deployment frontend -n production
 ```
 
-See [examples/docker/README.md](examples/docker/README.md) for in-cluster usage.
-
-### Build from source
-
-**Prerequisites:** Go 1.26+, `kubectl` configured, Kubernetes 1.33–1.36
+### Quick start — Docker
 
 ```bash
-go install github.com/Stacked-Nerds/ktrace/cmd/ktrace@latest
+docker run --rm --user 0 \
+  -v "$HOME/.kube:/root/.kube:ro" \
+  ghcr.io/stacked-nerds/ktrace:latest \
+  deployment frontend -n production
 ```
 
 ## Usage
@@ -58,6 +64,14 @@ ktrace pod nginx -n production --show-collected
 | `--json` | Export full `TraceResult` as JSON |
 | `-v, --verbose` | Detailed explanations and all recommendations |
 | `--show-collected` | Show collected resource counts |
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `KUBECONFIG` | Path to kubeconfig (same as kubectl) |
+| `KTRACE_API_SERVER` | Override API server URL (useful in Docker/k3s) |
+| `KTRACE_RUNTIME` | Force runtime hint mode: `docker` or `in-cluster` (testing) |
 
 ### Detected failure conditions
 

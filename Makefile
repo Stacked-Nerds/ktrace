@@ -20,7 +20,7 @@ docker-build:
 	docker build -t ghcr.io/stacked-nerds/ktrace:local .
 
 docker-run:
-	docker run --rm -v "$(HOME)/.kube:/home/ktrace/.kube:ro" ghcr.io/stacked-nerds/ktrace:local deployment frontend
+	docker run --rm --user 0 -v "$(HOME)/.kube:/root/.kube:ro" ghcr.io/stacked-nerds/ktrace:local deployment frontend
 
 fmt:
 	go fmt ./...

@@ -36,7 +36,7 @@ func trace(kind, name, ns string) (*models.TraceResult, error) {
 		Namespace:  ns,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("connect to cluster: %w", err)
+		return nil, err
 	}
 
 	orch := newOrchestratorFn(client)

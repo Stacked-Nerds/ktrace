@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Stacked-Nerds/ktrace/internal/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -47,60 +48,126 @@ func New(opts Options) (*Client, error) {
 }
 
 func restConfig(opts Options) (*rest.Config, error) {
-	explicit := opts.Kubeconfig != "" || opts.Context != ""
+	explicitPath := opts.Kubeconfig != ""
 
+	if explicitPath {
+		cfg, err := loadClientConfig(opts.Kubeconfig, opts.Context)
+		if err != nil {
+			return nil, newLoadError(fmt.Errorf("load kubeconfig %q: %w", opts.Kubeconfig, err), []string{opts.Kubeconfig})
+		}
+		return verifyClusterConnection(cfg)
+	}
+
+	if cfg, err := tryDefaultKubeconfigLoad(opts.Context); err == nil {
+		if connected, err := verifyClusterConnection(cfg); err == nil {
+			return connected, nil
+		} else if isConnectError(err) {
+			return nil, err
+		}
+	}
+
+	candidates := kubeconfigCandidates(opts)
+	var triedPaths []string
+	var lastLoadErr error
+
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+		}
+
+		triedPaths = append(triedPaths, path)
+
+		cfg, err := loadClientConfig(path, opts.Context)
+		if err != nil {
+			lastLoadErr = err
+			if isPermissionError(err) {
+				continue
+			}
+			continue
+		}
+
+		connected, err := verifyClusterConnection(cfg)
+		if err == nil {
+			return connected, nil
+		}
+		if isConnectError(err) {
+			return nil, err
+		}
+		lastLoadErr = err
+	}
+
+	if len(triedPaths) == 0 {
+		return restConfigInCluster(lastLoadErr, candidates)
+	}
+
+	if lastLoadErr != nil {
+		return nil, newLoadError(lastLoadErr, triedPaths)
+	}
+
+	return restConfigInCluster(nil, triedPaths)
+}
+
+func tryDefaultKubeconfigLoad(context string) (*rest.Config, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if opts.Kubeconfig != "" {
-		loadingRules.ExplicitPath = opts.Kubeconfig
-	} else if env := os.Getenv("KUBECONFIG"); env != "" {
-		loadingRules.ExplicitPath = env
+	overrides := &clientcmd.ConfigOverrides{}
+	if context != "" {
+		overrides.CurrentContext = context
 	}
 
-	configOverrides := &clientcmd.ConfigOverrides{}
-	if opts.Context != "" {
-		configOverrides.CurrentContext = opts.Context
-	}
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
+	return clientConfig.ClientConfig()
+}
 
-	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
-	config, kubeErr := clientConfig.ClientConfig()
-	if kubeErr == nil {
-		return config, nil
-	}
-	if explicit {
-		return nil, fmt.Errorf("load kubeconfig: %w", kubeErr)
-	}
-
+func restConfigInCluster(kubeErr error, triedPaths []string) (*rest.Config, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		return nil, fmt.Errorf("load kubernetes config (kubeconfig: %v; in-cluster: %w)", kubeErr, err)
+		combined := fmt.Errorf("kubeconfig: %v; in-cluster: %w", kubeErr, err)
+		if runtime.InCluster() {
+			return nil, newInClusterLoadError(combined, triedPaths)
+		}
+		return nil, newLoadError(combined, triedPaths)
 	}
 	return config, nil
 }
 
-// NewFromClientset creates a Client from an existing clientset (for testing).
-func NewFromClientset(cs kubernetes.Interface) *Client {
-	return &Client{Clientset: cs}
+func loadClientConfig(path, context string) (*rest.Config, error) {
+	loadingRules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: path}
+	overrides := &clientcmd.ConfigOverrides{}
+	if context != "" {
+		overrides.CurrentContext = context
+	}
+
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
+	return clientConfig.ClientConfig()
 }
 
 // DefaultNamespace returns the namespace from kubeconfig or the in-cluster service account.
 func DefaultNamespace(opts Options) (string, error) {
-	explicit := opts.Kubeconfig != "" || opts.Context != ""
+	explicitPath := opts.Kubeconfig != ""
+
+	if explicitPath {
+		return namespaceFromConfig(opts.Kubeconfig, opts.Context)
+	}
 
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if opts.Kubeconfig != "" {
-		loadingRules.ExplicitPath = opts.Kubeconfig
-	}
-
-	configOverrides := &clientcmd.ConfigOverrides{}
+	overrides := &clientcmd.ConfigOverrides{}
 	if opts.Context != "" {
-		configOverrides.CurrentContext = opts.Context
+		overrides.CurrentContext = opts.Context
 	}
-
-	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
 	if ns, _, err := clientConfig.Namespace(); err == nil && ns != "" {
 		return ns, nil
-	} else if explicit {
-		return "", fmt.Errorf("resolve default namespace from kubeconfig: %w", err)
+	}
+
+	for _, path := range kubeconfigCandidates(opts) {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		if ns, err := namespaceFromConfig(path, opts.Context); err == nil && ns != "" {
+			return ns, nil
+		}
 	}
 
 	if ns := inClusterNamespace(); ns != "" {
@@ -108,6 +175,23 @@ func DefaultNamespace(opts Options) (string, error) {
 	}
 
 	return "", fmt.Errorf("resolve default namespace: no kubeconfig or in-cluster namespace found")
+}
+
+func namespaceFromConfig(path, context string) (string, error) {
+	loadingRules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: path}
+	overrides := &clientcmd.ConfigOverrides{}
+	if context != "" {
+		overrides.CurrentContext = context
+	}
+
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
+	ns, _, err := clientConfig.Namespace()
+	return ns, err
+}
+
+// NewFromClientset creates a Client from an existing clientset (for testing).
+func NewFromClientset(cs kubernetes.Interface) *Client {
+	return &Client{Clientset: cs}
 }
 
 func inClusterNamespace() string {

@@ -18,28 +18,54 @@ If the package is private, authenticate first:
 echo $GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 ```
 
-## Run with a kubeconfig (from your machine)
+## Run with a kubeconfig (recommended)
 
-Mount your kubeconfig so ktrace can reach the cluster API:
+Mount your kubeconfig and run. ktrace automatically tries common paths
+(`/root/.kube/config`, `/kube/config`) and, for k3s-style localhost URLs,
+retries via the Docker host gateway — so this often works without extra flags:
 
 ```bash
 docker run --rm \
-  -v "$HOME/.kube:/home/ktrace/.kube:ro" \
-  -e KUBECONFIG=/home/ktrace/.kube/config \
+  -v "$HOME/.kube:/root/.kube:ro" \
   ghcr.io/stacked-nerds/ktrace:latest \
   deployment frontend -n production
 ```
 
-The image sets `HOME=/home/ktrace`. If you use an older image, add `-e KUBECONFIG=/home/ktrace/.kube/config` explicitly.
-
-Or point at a specific config file:
+If kubeconfig is mode `600` (typical), run as root so the file is readable:
 
 ```bash
-docker run --rm \
-  -v /path/to/kubeconfig:/config:ro \
-  -e KUBECONFIG=/config \
+docker run --rm --user 0 \
+  -v "$HOME/.kube:/root/.kube:ro" \
   ghcr.io/stacked-nerds/ktrace:latest \
-  deployment frontend -n production --json
+  deployment frontend -n production
+```
+
+For k3s when auto-retry still cannot reach the API server, use host networking:
+
+```bash
+docker run --rm --network host --user 0 \
+  -v "$HOME/.kube:/root/.kube:ro" \
+  ghcr.io/stacked-nerds/ktrace:latest \
+  deployment frontend -n production
+```
+
+Override the API server URL without editing kubeconfig:
+
+```bash
+docker run --rm --user 0 \
+  -v "$HOME/.kube:/root/.kube:ro" \
+  -e KTRACE_API_SERVER=https://<NODE_IP>:6443 \
+  ghcr.io/stacked-nerds/ktrace:latest \
+  deployment frontend -n production
+```
+
+### Shell alias
+
+```bash
+alias ktrace='docker run --rm --user 0 -v $HOME/.kube:/root/.kube:ro ghcr.io/stacked-nerds/ktrace:latest'
+
+ktrace deployment ai-backend-api -n api
+ktrace deployment ai-backend-api -n api -v --json
 ```
 
 ## Run inside Kubernetes (in-cluster)
@@ -57,6 +83,9 @@ spec:
     spec:
       serviceAccountName: ktrace
       restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
       containers:
         - name: ktrace
           image: ghcr.io/stacked-nerds/ktrace:latest
