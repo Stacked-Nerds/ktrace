@@ -1,0 +1,15 @@
+.git
+.github
+.tools
+bin
+dist
+*.md
+docs
+examples
+test
+LICENSE
+Makefile
+.golangci.yml
+.gitignore
+*.test
+coverage.*

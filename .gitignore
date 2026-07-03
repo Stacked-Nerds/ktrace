@@ -1,0 +1,30 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+ktrace
+
+# Test
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go
+vendor/
+.tools/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
