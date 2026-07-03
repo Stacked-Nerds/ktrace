@@ -111,8 +111,8 @@ func oomTerminatedState(cs corev1.ContainerStatus) *corev1.ContainerStateTermina
 	if cs.State.Terminated != nil && cs.State.Terminated.Reason == "OOMKilled" {
 		return cs.State.Terminated
 	}
-	if cs.LastState.Terminated != nil && cs.LastState.Terminated.Reason == "OOMKilled" {
-		return cs.LastState.Terminated
+	if cs.LastTerminationState.Terminated != nil && cs.LastTerminationState.Terminated.Reason == "OOMKilled" {
+		return cs.LastTerminationState.Terminated
 	}
 	return nil
 }

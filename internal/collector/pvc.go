@@ -33,7 +33,7 @@ func collectPVCs(ctx context.Context, client *kubernetes.Client, namespace strin
 	for name := range names {
 		pvc, err := client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			if metav1.IsNotFound(err) {
+			if isNotFound(err) {
 				continue
 			}
 			return fmt.Errorf("get pvc %q: %w", name, err)

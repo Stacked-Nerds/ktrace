@@ -30,7 +30,7 @@ func collectNodes(ctx context.Context, client *kubernetes.Client, names map[stri
 	for name := range names {
 		node, err := client.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			if metav1.IsNotFound(err) {
+			if isNotFound(err) {
 				continue
 			}
 			return fmt.Errorf("get node %q: %w", name, err)

@@ -30,7 +30,7 @@ func collectPVs(ctx context.Context, client *kubernetes.Client, names map[string
 	for name := range names {
 		pv, err := client.Clientset.CoreV1().PersistentVolumes().Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			if metav1.IsNotFound(err) {
+			if isNotFound(err) {
 				continue
 			}
 			return fmt.Errorf("get pv %q: %w", name, err)

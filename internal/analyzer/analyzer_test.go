@@ -75,7 +75,7 @@ func TestAnalyzeOOMKilledFromLastState(t *testing.T) {
 				State: corev1.ContainerState{
 					Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"},
 				},
-				LastState: corev1.ContainerState{
+				LastTerminationState: corev1.ContainerState{
 					Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137},
 				},
 			}},

@@ -6,7 +6,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Stacked-Nerds/ktrace/pkg/models"
 )
@@ -50,7 +49,7 @@ func analyzeDeploymentConditions(graph *models.ResourceGraph) []models.Finding {
 			continue
 		}
 		for _, cond := range d.Status.Conditions {
-			if cond.Status == metav1.ConditionFalse && (cond.Type == appsv1.DeploymentAvailable || cond.Type == appsv1.DeploymentProgressing) {
+			if cond.Status == corev1.ConditionFalse && (cond.Type == appsv1.DeploymentAvailable || cond.Type == appsv1.DeploymentProgressing) {
 				findings = append(findings, models.Finding{
 					Severity:    models.SeverityMedium,
 					Condition:   string(cond.Type),
