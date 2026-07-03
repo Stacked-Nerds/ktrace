@@ -22,7 +22,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates \
-    && adduser -D -u 65532 ktrace
+    && adduser -D -h /home/ktrace -u 65532 ktrace
+
+ENV HOME=/home/ktrace
 
 COPY --from=builder /ktrace /usr/local/bin/ktrace
 

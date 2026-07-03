@@ -52,6 +52,8 @@ func restConfig(opts Options) (*rest.Config, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if opts.Kubeconfig != "" {
 		loadingRules.ExplicitPath = opts.Kubeconfig
+	} else if env := os.Getenv("KUBECONFIG"); env != "" {
+		loadingRules.ExplicitPath = env
 	}
 
 	configOverrides := &clientcmd.ConfigOverrides{}
@@ -60,15 +62,17 @@ func restConfig(opts Options) (*rest.Config, error) {
 	}
 
 	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
-	if config, err := clientConfig.ClientConfig(); err == nil {
+	config, kubeErr := clientConfig.ClientConfig()
+	if kubeErr == nil {
 		return config, nil
-	} else if explicit {
-		return nil, fmt.Errorf("load kubeconfig: %w", err)
+	}
+	if explicit {
+		return nil, fmt.Errorf("load kubeconfig: %w", kubeErr)
 	}
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		return nil, fmt.Errorf("load kubernetes config: %w", err)
+		return nil, fmt.Errorf("load kubernetes config (kubeconfig: %v; in-cluster: %w)", kubeErr, err)
 	}
 	return config, nil
 }

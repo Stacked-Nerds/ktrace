@@ -17,6 +17,7 @@ docker pull ghcr.io/stacked-nerds/ktrace:latest
 
 docker run --rm \
   -v "$HOME/.kube:/home/ktrace/.kube:ro" \
+  -e KUBECONFIG=/home/ktrace/.kube/config \
   ghcr.io/stacked-nerds/ktrace:latest \
   deployment frontend -n production
 ```

@@ -25,9 +25,12 @@ Mount your kubeconfig so ktrace can reach the cluster API:
 ```bash
 docker run --rm \
   -v "$HOME/.kube:/home/ktrace/.kube:ro" \
+  -e KUBECONFIG=/home/ktrace/.kube/config \
   ghcr.io/stacked-nerds/ktrace:latest \
   deployment frontend -n production
 ```
+
+The image sets `HOME=/home/ktrace`. If you use an older image, add `-e KUBECONFIG=/home/ktrace/.kube/config` explicitly.
 
 Or point at a specific config file:
 
