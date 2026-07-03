@@ -34,100 +34,100 @@ func (c *eventCollector) collectForGraph(ctx context.Context, client *kubernetes
 	seen := make(map[string]bool)
 	timeline := make([]models.TimelineEvent, 0)
 
-	for _, fieldSelector := range fieldSelectors {
-		list, err := client.Clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
-			FieldSelector: fieldSelector,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("list events: %w", err)
-		}
-
-		for i := range list.Items {
-			ev := &list.Items[i]
-			key := string(ev.UID)
-			if key == "" {
-				key = fmt.Sprintf("%s/%s/%s", ev.InvolvedObject.Kind, ev.InvolvedObject.Name, ev.Reason)
-			}
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-
-			ts := ev.LastTimestamp.Time
-			if ts.IsZero() {
-				ts = ev.EventTime.Time
-			}
-			if ts.IsZero() {
-				ts = ev.FirstTimestamp.Time
-			}
-			if ts.IsZero() {
-				ts = time.Now()
-			}
-
-			timeline = append(timeline, models.TimelineEvent{
-				Timestamp: ts,
-				Source: models.ResourceRef{
-					Kind:      ev.InvolvedObject.Kind,
-					Name:      ev.InvolvedObject.Name,
-					Namespace: ev.InvolvedObject.Namespace,
-					UID:       string(ev.InvolvedObject.UID),
-				},
-				Type:    ev.Type,
-				Reason:  ev.Reason,
-				Message: ev.Message,
-				Count:   ev.Count,
+	namespaces := eventNamespaces(namespace, graph)
+	for _, ns := range namespaces {
+		for _, fieldSelector := range fieldSelectors {
+			list, err := client.Clientset.CoreV1().Events(ns).List(ctx, metav1.ListOptions{
+				FieldSelector: fieldSelector,
 			})
-		}
-	}
-
-	// Also list namespace-wide recent events when graph has multiple resources
-	if graph != nil && len(graph.Resources) > 0 {
-		list, err := client.Clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return nil, fmt.Errorf("list namespace events: %w", err)
+			if err != nil {
+				return nil, fmt.Errorf("list events in namespace %q: %w", ns, err)
+			}
+			appendEvents(&timeline, seen, list.Items)
 		}
 
-		targetUIDs := graphUIDs(graph)
-		for i := range list.Items {
-			ev := &list.Items[i]
-			if !matchesGraphEvent(ev, graph, targetUIDs) {
-				continue
+		if graph != nil && len(graph.Resources) > 0 {
+			list, err := client.Clientset.CoreV1().Events(ns).List(ctx, metav1.ListOptions{})
+			if err != nil {
+				return nil, fmt.Errorf("list namespace events in %q: %w", ns, err)
 			}
-			key := string(ev.UID)
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
 
-			ts := eventTimestamp(ev)
-			timeline = append(timeline, models.TimelineEvent{
-				Timestamp: ts,
-				Source: models.ResourceRef{
-					Kind:      ev.InvolvedObject.Kind,
-					Name:      ev.InvolvedObject.Name,
-					Namespace: ev.InvolvedObject.Namespace,
-					UID:       string(ev.InvolvedObject.UID),
-				},
-				Type:    ev.Type,
-				Reason:  ev.Reason,
-				Message: ev.Message,
-				Count:   ev.Count,
-			})
+			targetUIDs := graphUIDs(graph)
+			for i := range list.Items {
+				ev := &list.Items[i]
+				if !matchesGraphEvent(ev, graph, targetUIDs) {
+					continue
+				}
+				appendEvent(&timeline, seen, ev)
+			}
 		}
 	}
 
 	return timeline, nil
 }
 
+// eventNamespaces returns namespaces to search for events. Cluster-scoped object
+// events (Node, PersistentVolume) are stored in the default namespace.
+func eventNamespaces(workloadNamespace string, graph *models.ResourceGraph) []string {
+	namespaces := []string{workloadNamespace}
+	if graph == nil {
+		return namespaces
+	}
+
+	needsDefault := graph.Count("Node") > 0 || graph.Count("PersistentVolume") > 0
+	if needsDefault && workloadNamespace != metav1.NamespaceDefault {
+		namespaces = append(namespaces, metav1.NamespaceDefault)
+	}
+	return namespaces
+}
+
+func appendEvents(timeline *[]models.TimelineEvent, seen map[string]bool, events []corev1.Event) {
+	for i := range events {
+		appendEvent(timeline, seen, &events[i])
+	}
+}
+
+func appendEvent(timeline *[]models.TimelineEvent, seen map[string]bool, ev *corev1.Event) {
+	key := string(ev.UID)
+	if key == "" {
+		key = fmt.Sprintf("%s/%s/%s/%s", ev.InvolvedObject.Kind, ev.InvolvedObject.Name, ev.Reason, ev.Message)
+	}
+	if seen[key] {
+		return
+	}
+	seen[key] = true
+
+	ts := eventTimestamp(ev)
+	if ts.IsZero() {
+		return
+	}
+
+	*timeline = append(*timeline, models.TimelineEvent{
+		Timestamp: ts,
+		Source: models.ResourceRef{
+			Kind:      ev.InvolvedObject.Kind,
+			Name:      ev.InvolvedObject.Name,
+			Namespace: ev.InvolvedObject.Namespace,
+			UID:       string(ev.InvolvedObject.UID),
+		},
+		Type:    ev.Type,
+		Reason:  ev.Reason,
+		Message: ev.Message,
+		Count:   ev.Count,
+	})
+}
+
 func eventTimestamp(ev *corev1.Event) time.Time {
-	ts := ev.LastTimestamp.Time
-	if ts.IsZero() {
-		ts = ev.EventTime.Time
+	if !ev.LastTimestamp.IsZero() {
+		return ev.LastTimestamp.Time
 	}
-	if ts.IsZero() {
-		ts = ev.FirstTimestamp.Time
+	if !ev.EventTime.IsZero() {
+		return ev.EventTime.Time
 	}
-	return ts
+	if !ev.FirstTimestamp.IsZero() {
+		return ev.FirstTimestamp.Time
+	}
+	return ev.CreationTimestamp.Time
 }
 
 func buildInvolvedObjectSelectors(graph *models.ResourceGraph) []string {
