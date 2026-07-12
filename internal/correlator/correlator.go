@@ -2,6 +2,7 @@ package correlator
 
 import (
 	"encoding/json"
+	"sort"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -30,6 +31,10 @@ func Correlate(graph *models.ResourceGraph) []models.Edge {
 	pvcByName := indexByKindName(graph, "PersistentVolumeClaim")
 	pvByName := indexByKindName(graph, "PersistentVolume")
 	nodeByName := indexByKindName(graph, "Node")
+	configMapByName := indexByKindName(graph, "ConfigMap")
+	secretByName := indexByKindName(graph, "Secret")
+	serviceAccountByName := indexByKindName(graph, "ServiceAccount")
+	storageClassByName := indexByKindName(graph, "StorageClass")
 
 	for _, resources := range graph.Resources {
 		for _, r := range resources {
@@ -41,6 +46,20 @@ func Correlate(graph *models.ResourceGraph) []models.Edge {
 				add(parent, r.Ref, "owns")
 			}
 		}
+	}
+	for _, reference := range graph.References {
+		relation := "references"
+		switch reference.To.Kind {
+		case "Secret":
+			relation = "references-secret"
+		case "ConfigMap":
+			relation = "references-configmap"
+		case "ServiceAccount":
+			relation = "uses-service-account"
+		case "StorageClass":
+			relation = "provisioned-by"
+		}
+		add(reference.From, reference.To, relation)
 	}
 
 	for _, cr := range graph.Resources["Pod"] {
@@ -62,6 +81,14 @@ func Correlate(graph *models.ResourceGraph) []models.Edge {
 				add(cr.Ref, node, "scheduled")
 			}
 		}
+		linkPodReferences(
+			cr.Ref,
+			pod,
+			configMapByName,
+			secretByName,
+			serviceAccountByName,
+			add,
+		)
 	}
 
 	for _, cr := range graph.Resources["PersistentVolumeClaim"] {
@@ -74,10 +101,86 @@ func Correlate(graph *models.ResourceGraph) []models.Edge {
 				add(cr.Ref, pv, "bound")
 			}
 		}
+		if pvc.Spec.StorageClassName != nil {
+			if storageClass, ok := storageClassByName[*pvc.Spec.StorageClassName]; ok {
+				add(cr.Ref, storageClass, "provisioned-by")
+			}
+		}
 	}
 
 	linkServices(graph, add)
+	sort.Slice(edges, func(i, j int) bool {
+		left := edges[i].From.String() + "|" + edges[i].Relation + "|" + edges[i].To.String()
+		right := edges[j].From.String() + "|" + edges[j].Relation + "|" + edges[j].To.String()
+		return left < right
+	})
 	return edges
+}
+
+func linkPodReferences(
+	podRef models.ResourceRef,
+	pod *corev1.Pod,
+	configMaps map[string]models.ResourceRef,
+	secrets map[string]models.ResourceRef,
+	serviceAccounts map[string]models.ResourceRef,
+	add func(from, to models.ResourceRef, relation string),
+) {
+	key := func(name string) string { return pod.Namespace + "/" + name }
+
+	if pod.Spec.ServiceAccountName != "" {
+		if ref, ok := serviceAccounts[key(pod.Spec.ServiceAccountName)]; ok {
+			add(podRef, ref, "uses-service-account")
+		}
+	}
+	for _, pullSecret := range pod.Spec.ImagePullSecrets {
+		if ref, ok := secrets[key(pullSecret.Name)]; ok {
+			add(podRef, ref, "uses-image-pull-secret")
+		}
+	}
+	for _, volume := range pod.Spec.Volumes {
+		if volume.ConfigMap != nil {
+			if ref, ok := configMaps[key(volume.ConfigMap.Name)]; ok {
+				add(podRef, ref, "references-configmap")
+			}
+		}
+		if volume.Secret != nil {
+			if ref, ok := secrets[key(volume.Secret.SecretName)]; ok {
+				add(podRef, ref, "references-secret")
+			}
+		}
+	}
+
+	containers := append([]corev1.Container{}, pod.Spec.InitContainers...)
+	containers = append(containers, pod.Spec.Containers...)
+	for _, container := range containers {
+		for _, source := range container.EnvFrom {
+			if source.ConfigMapRef != nil {
+				if ref, ok := configMaps[key(source.ConfigMapRef.Name)]; ok {
+					add(podRef, ref, "references-configmap")
+				}
+			}
+			if source.SecretRef != nil {
+				if ref, ok := secrets[key(source.SecretRef.Name)]; ok {
+					add(podRef, ref, "references-secret")
+				}
+			}
+		}
+		for _, env := range container.Env {
+			if env.ValueFrom == nil {
+				continue
+			}
+			if env.ValueFrom.ConfigMapKeyRef != nil {
+				if ref, ok := configMaps[key(env.ValueFrom.ConfigMapKeyRef.Name)]; ok {
+					add(podRef, ref, "references-configmap")
+				}
+			}
+			if env.ValueFrom.SecretKeyRef != nil {
+				if ref, ok := secrets[key(env.ValueFrom.SecretKeyRef.Name)]; ok {
+					add(podRef, ref, "references-secret")
+				}
+			}
+		}
+	}
 }
 
 func indexByUID(graph *models.ResourceGraph) map[string]models.ResourceRef {

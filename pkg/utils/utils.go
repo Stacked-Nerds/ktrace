@@ -15,10 +15,18 @@ func NormalizeKind(kind string) string {
 		return "deployment"
 	case "rs", "replicasets":
 		return "replicaset"
-	case "pods":
+	case "po", "pods":
 		return "pod"
 	case "ns", "namespaces":
 		return "namespace"
+	case "sts", "statefulsets":
+		return "statefulset"
+	case "ds", "daemonsets":
+		return "daemonset"
+	case "jobs":
+		return "job"
+	case "cj", "cronjobs":
+		return "cronjob"
 	default:
 		return k
 	}

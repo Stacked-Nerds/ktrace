@@ -24,3 +24,17 @@ func TestBuildSortsAndDedupes(t *testing.T) {
 		t.Fatal("timeline not sorted ascending")
 	}
 }
+
+func TestBuildOrdersEqualTimestampsDeterministically(t *testing.T) {
+	now := time.Now()
+	graph := models.NewResourceGraph(models.ResourceRef{Kind: "Pod", Name: "root"})
+	graph.Events = []models.TimelineEvent{
+		{Timestamp: now, Reason: "B", Source: models.ResourceRef{Kind: "Pod", Name: "b"}},
+		{Timestamp: now, Reason: "A", Source: models.ResourceRef{Kind: "Pod", Name: "a"}},
+	}
+
+	got := Build(graph)
+	if len(got) != 2 || got[0].Source.Name != "a" || got[1].Source.Name != "b" {
+		t.Fatalf("timeline order = %#v", got)
+	}
+}

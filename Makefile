@@ -37,4 +37,7 @@ test-cluster:
 	@echo "  ktrace deployment frontend -n production"
 	@echo "See examples/deployment-failure/ for setup."
 
-.PHONY: run build install test vet lint fmt tidy clean test-cluster docker-build docker-run
+test-integration:
+	bash test/integration/run.sh
+
+.PHONY: run build install test vet lint fmt tidy clean test-cluster test-integration docker-build docker-run

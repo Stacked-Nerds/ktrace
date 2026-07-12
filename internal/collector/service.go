@@ -35,7 +35,8 @@ func collectServicesForPods(ctx context.Context, client *kubernetes.Client, name
 
 	list, err := client.Clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("list services: %w", err)
+		state.warn(fmt.Sprintf("collect related Services: %v", err))
+		return nil
 	}
 
 	for i := range list.Items {

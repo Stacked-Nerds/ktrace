@@ -31,7 +31,30 @@ func (c *replicaSetCollector) Collect(ctx context.Context, client *kubernetes.Cl
 }
 
 func collectPodsForOwner(ctx context.Context, client *kubernetes.Client, namespace, ownerUID string, state *collectState) error {
-	list, err := client.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	return collectPodsForOwnerWithSelector(ctx, client, namespace, ownerUID, "", state)
+}
+
+func collectPodsForOwnerWithSelector(
+	ctx context.Context,
+	client *kubernetes.Client,
+	namespace, ownerUID, labelSelector string,
+	state *collectState,
+) error {
+	return collectPodsForOwnerWithSelectorMode(
+		ctx, client, namespace, ownerUID, labelSelector, state, true,
+	)
+}
+
+func collectPodsForOwnerWithSelectorMode(
+	ctx context.Context,
+	client *kubernetes.Client,
+	namespace, ownerUID, labelSelector string,
+	state *collectState,
+	collectRelated bool,
+) error {
+	list, err := client.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
 	if err != nil {
 		return fmt.Errorf("list pods: %w", err)
 	}
@@ -50,6 +73,9 @@ func collectPodsForOwner(ctx context.Context, client *kubernetes.Client, namespa
 		podLabels = append(podLabels, pod.Labels)
 	}
 
+	if !collectRelated {
+		return nil
+	}
 	if err := collectRelatedFromPods(ctx, client, namespace, state); err != nil {
 		return err
 	}
@@ -108,9 +134,24 @@ func collectRelatedFromPods(ctx context.Context, client *kubernetes.Client, name
 	wg.Wait()
 
 	if pvcErr != nil {
-		return pvcErr
+		state.warn(fmt.Sprintf("collect PVC dependencies: %v", pvcErr))
 	}
-	return nodeErr
+	if nodeErr != nil {
+		state.warn(fmt.Sprintf("collect Node dependencies: %v", nodeErr))
+	}
+	return nil
+}
+
+func collectedPodLabels(state *collectState) []map[string]string {
+	pods := state.resources("Pod")
+	labels := make([]map[string]string, 0, len(pods))
+	for _, resource := range pods {
+		var pod corev1.Pod
+		if decodeRaw(resource.Raw, &pod) == nil {
+			labels = append(labels, pod.Labels)
+		}
+	}
+	return labels
 }
 
 func decodeRaw(raw []byte, obj interface{}) error {

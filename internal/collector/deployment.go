@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -40,7 +41,10 @@ func collectDeployment(ctx context.Context, client *kubernetes.Client, ref model
 	}
 
 	deployUID := resources[0].Metadata.UID
-	return collectReplicaSetsForOwner(ctx, client, ref.Namespace, deployUID, state)
+	if err := collectReplicaSetsForOwner(ctx, client, ref.Namespace, deployUID, state); err != nil {
+		state.warn(fmt.Sprintf("collect Deployment children: %v", err))
+	}
+	return nil
 }
 
 func collectReplicaSetsForOwner(ctx context.Context, client *kubernetes.Client, namespace, ownerUID string, state *collectState) error {
@@ -49,26 +53,52 @@ func collectReplicaSetsForOwner(ctx context.Context, client *kubernetes.Client, 
 		return fmt.Errorf("list replicasets: %w", err)
 	}
 
-	rsUIDs := make([]string, 0)
+	owned := make([]int, 0)
 	for i := range list.Items {
-		rs := &list.Items[i]
-		if !utils.HasOwner(rs.OwnerReferences, ownerUID) {
-			continue
+		if utils.HasOwner(list.Items[i].OwnerReferences, ownerUID) {
+			owned = append(owned, i)
 		}
+	}
+	sort.Slice(owned, func(i, j int) bool {
+		left := list.Items[owned[i]].CreationTimestamp.Time
+		right := list.Items[owned[j]].CreationTimestamp.Time
+		return left.After(right)
+	})
+	const replicaSetHistoryLimit = 10
+	if len(owned) > replicaSetHistoryLimit {
+		owned = owned[:replicaSetHistoryLimit]
+		state.notice("Deployment revision history limited to 10 most recent ReplicaSets")
+	}
+
+	type replicaSetTarget struct {
+		uid      string
+		selector string
+	}
+	targets := make([]replicaSetTarget, 0)
+	for _, index := range owned {
+		rs := &list.Items[index]
 		cr, err := toCollectedResource("ReplicaSet", rs, rs.ObjectMeta)
 		if err != nil {
 			return err
 		}
 		state.add(cr)
-		rsUIDs = append(rsUIDs, string(rs.UID))
+		targets = append(targets, replicaSetTarget{
+			uid:      string(rs.UID),
+			selector: formatLabelSelector(rs.Spec.Selector),
+		})
 	}
 
-	for _, rsUID := range rsUIDs {
-		if err := collectPodsForOwner(ctx, client, namespace, rsUID, state); err != nil {
+	for _, target := range targets {
+		if err := collectPodsForOwnerWithSelectorMode(
+			ctx, client, namespace, target.uid, target.selector, state, false,
+		); err != nil {
 			return err
 		}
 	}
-	return nil
+	if err := collectRelatedFromPods(ctx, client, namespace, state); err != nil {
+		return err
+	}
+	return collectServicesForPods(ctx, client, namespace, collectedPodLabels(state), state)
 }
 
 func collectReplicaSet(ctx context.Context, client *kubernetes.Client, ref models.ResourceRef, state *collectState) error {
@@ -83,7 +113,17 @@ func collectReplicaSet(ctx context.Context, client *kubernetes.Client, ref model
 	}
 	state.add(cr)
 
-	return collectPodsForOwner(ctx, client, ref.Namespace, string(rs.UID), state)
+	if err := collectPodsForOwnerWithSelector(
+		ctx,
+		client,
+		ref.Namespace,
+		string(rs.UID),
+		formatLabelSelector(rs.Spec.Selector),
+		state,
+	); err != nil {
+		state.warn(fmt.Sprintf("collect ReplicaSet pods: %v", err))
+	}
+	return nil
 }
 
 func collectFromReplicaSetRoot(ctx context.Context, client *kubernetes.Client, ref models.ResourceRef, state *collectState) error {

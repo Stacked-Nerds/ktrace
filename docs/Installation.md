@@ -3,6 +3,18 @@
 ktrace supports several installation methods. Connection errors include hints
 tailored to how you are running the tool.
 
+After installation, verify Kubernetes access and the binary:
+
+```bash
+kubectl cluster-info
+ktrace --version
+ktrace deployment <name> -n <namespace> --explain
+```
+
+Supported workload roots in v0.3 are Deployment, ReplicaSet, Pod, Namespace,
+StatefulSet, DaemonSet, Job, and CronJob. See [RBAC.md](RBAC.md) when running
+with a restricted user or ServiceAccount.
+
 ## 1. Go install (recommended for developers)
 
 **Prerequisites:** Go 1.26+

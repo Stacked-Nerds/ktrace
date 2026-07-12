@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/Stacked-Nerds/ktrace/internal/collector"
@@ -30,6 +29,16 @@ func resolveDefaultNamespace() (string, error) {
 }
 
 func trace(kind, name, ns string) (*models.TraceResult, error) {
+	return traceContext(context.Background(), kind, name, ns)
+}
+
+func traceContext(ctx context.Context, kind, name, ns string) (*models.TraceResult, error) {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
 	client, err := newClientFn(kubernetes.Options{
 		Kubeconfig: kubeconfig,
 		Context:    kubeContext,
@@ -40,10 +49,17 @@ func trace(kind, name, ns string) (*models.TraceResult, error) {
 	}
 
 	orch := newOrchestratorFn(client)
-	graph, err := orch.Collect(context.Background(), kind, name, ns)
+	orch.SetMaxResources(maxResources)
+	graph, err := orch.Collect(ctx, kind, name, ns)
 	if err != nil {
 		return nil, err
 	}
+	collector.CollectFailureLogs(ctx, client, graph, collector.LogOptions{
+		Current:      includeLogs,
+		Previous:     previousLogs,
+		TailLines:    logTail,
+		SinceSeconds: int64(logSince.Seconds()),
+	})
 
 	return analyzeFn(graph), nil
 }

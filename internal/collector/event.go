@@ -33,6 +33,23 @@ func (c *eventCollector) collectForGraph(ctx context.Context, client *kubernetes
 	namespaces := eventNamespaces(namespace, graph)
 	for _, ns := range namespaces {
 		if graph != nil && len(graph.Resources) > 0 {
+			targeted, supported, err := listTargetedGraphEvents(ctx, client, ns, graph)
+			if err != nil {
+				if isOptionalNamespaceEventError(ns, namespace, err) {
+					continue
+				}
+				return nil, fmt.Errorf("list targeted events in %q: %w", ns, err)
+			}
+			if supported {
+				targetUIDs := graphUIDs(graph)
+				for i := range targeted {
+					if matchesGraphEvent(&targeted[i], graph, targetUIDs) {
+						appendEvent(&timeline, seen, &targeted[i])
+					}
+				}
+				continue
+			}
+
 			targetUIDs := graphUIDs(graph)
 			items, err := listAllEvents(ctx, client, ns, metav1.ListOptions{})
 			if err != nil {
@@ -75,6 +92,72 @@ func (c *eventCollector) collectForGraph(ctx context.Context, client *kubernetes
 	return timeline, nil
 }
 
+const maxTargetedEventQueries = 25
+
+// listTargetedGraphEvents uses involvedObject.uid field selectors on small
+// graphs. It reports supported=false when a server does not support the
+// selector or the graph is large enough that one paginated list is cheaper.
+func listTargetedGraphEvents(
+	ctx context.Context,
+	client *kubernetes.Client,
+	namespace string,
+	graph *models.ResourceGraph,
+) ([]corev1.Event, bool, error) {
+	refs := eventRefsForNamespace(namespace, graph)
+	if len(refs) == 0 {
+		return nil, true, nil
+	}
+	if len(refs) > maxTargetedEventQueries {
+		return nil, false, nil
+	}
+
+	all := make([]corev1.Event, 0)
+	for _, ref := range refs {
+		selector := buildFieldSelector(ref.Kind, ref.Name, ref.Namespace)
+		if ref.UID != "" {
+			selector = "involvedObject.uid=" + ref.UID
+		}
+		items, err := listAllEvents(ctx, client, namespace, metav1.ListOptions{
+			FieldSelector: selector,
+		})
+		if err != nil {
+			if errors.IsBadRequest(err) || errors.IsInvalid(err) {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+		all = append(all, items...)
+	}
+	return all, true, nil
+}
+
+func eventRefsForNamespace(namespace string, graph *models.ResourceGraph) []models.ResourceRef {
+	refs := make([]models.ResourceRef, 0)
+	seen := make(map[string]bool)
+	add := func(ref models.ResourceRef) {
+		eventNamespace := normalizeInvolvedObjectNamespace(ref.Kind, ref.Namespace)
+		if isClusterScopedKind(ref.Kind) {
+			eventNamespace = metav1.NamespaceDefault
+		}
+		if eventNamespace != namespace {
+			return
+		}
+		key := ref.String()
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		refs = append(refs, ref)
+	}
+	add(graph.Root)
+	for _, resources := range graph.Resources {
+		for _, resource := range resources {
+			add(resource.Ref)
+		}
+	}
+	return refs
+}
+
 // listAllEvents pages through all events in a namespace.
 func listAllEvents(ctx context.Context, client *kubernetes.Client, ns string, opts metav1.ListOptions) ([]corev1.Event, error) {
 	all := make([]corev1.Event, 0)
@@ -109,7 +192,10 @@ func eventNamespaces(workloadNamespace string, graph *models.ResourceGraph) []st
 		return namespaces
 	}
 
-	needsDefault := graph.Count("Node") > 0 || graph.Count("PersistentVolume") > 0
+	needsDefault := graph.Count("Node") > 0 ||
+		graph.Count("PersistentVolume") > 0 ||
+		graph.Count("Namespace") > 0 ||
+		graph.Count("StorageClass") > 0
 	if needsDefault && workloadNamespace != metav1.NamespaceDefault {
 		namespaces = append(namespaces, metav1.NamespaceDefault)
 	}

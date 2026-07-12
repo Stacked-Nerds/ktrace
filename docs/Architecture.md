@@ -1,20 +1,18 @@
 # ktrace Architecture
 
-This document describes the architecture of ktrace as of Phase 1.
+This document describes the v0.3 evidence-driven workload diagnostic pipeline.
 
 ## Mission
 
 ktrace answers three questions for any Kubernetes resource:
 
 1. **What happened?** — chronological timeline of events and state changes
-2. **Why did it happen?** — correlated root-cause analysis (Phase 2+)
-3. **What should I fix?** — actionable recommendations (Phase 2+)
-
-Phase 1 focuses on **resource collection** — gathering all related objects from the API server into a structured graph.
+2. **Why did it happen?** — graph-aware causal diagnosis with confidence
+3. **What should I fix?** — evidence-backed, actionable recommendations
 
 ## Package Map
 
-### Current (Phase 2)
+### Current (v0.3)
 
 | Package | Responsibility |
 |---------|----------------|
@@ -28,6 +26,8 @@ Phase 1 focuses on **resource collection** — gathering all related objects fro
 | `internal/explain` | Root-cause selection and status |
 | `internal/renderer/console` | Human-readable report output |
 | `internal/kubernetes` | Kubernetes client wrapper |
+| `internal/runtime` | Installation/runtime detection and contextual errors |
+| `internal/redact` | Credential redaction for all output paths |
 | `pkg/models` | Domain types including `TraceResult` |
 
 ### Planned (Phase 3+)
@@ -47,13 +47,21 @@ flowchart TD
     Orch --> Client[internal/kubernetes/Client]
     Client --> API[Kubernetes API Server]
     Orch --> Graph[pkg/models/ResourceGraph]
-    Graph --> Summary[Human Summary]
-    Graph --> JSON["--json output"]
+    Graph --> Corr[internal/correlator]
+    Graph --> Timeline[internal/timeline]
+    Graph --> Analyzer[internal/analyzer]
+    Corr --> Explain[internal/explain]
+    Timeline --> Explain
+    Analyzer --> Explain
+    Explain --> Result[pkg/models/TraceResult]
+    Result --> Console[Console or explain output]
+    Result --> JSON[Redacted summary JSON]
 ```
 
 ## Collection Graph
 
-When tracing a Deployment, the orchestrator walks this graph:
+The orchestrator can start from Deployment, ReplicaSet, Pod, Namespace,
+StatefulSet, DaemonSet, Job, or CronJob. A deployment walk includes:
 
 ```mermaid
 flowchart TD
@@ -63,6 +71,10 @@ flowchart TD
     PVC --> PV[PV]
     Pod --> Node[Node]
     Pod --> Svc[Service]
+    Pod --> CM[ConfigMap metadata]
+    Pod --> Secret[Secret metadata and keys]
+    Pod --> SA[ServiceAccount]
+    PVC --> SC[StorageClass]
     Deploy --> Events[Events]
     RS --> Events
     Pod --> Events
@@ -76,32 +88,45 @@ Discovery mechanisms:
 - **PVC spec** — bound PV name
 - **Service selectors** — match Pod labels
 - **Events API** — involvedObject name/UID matching
+- **Configuration references** — environment, volumes, service accounts, and image pull secrets
+- **Upward owner walk** — Pod → ReplicaSet/Job → Deployment/CronJob
 
 ## Collector Design
 
 Each resource kind has its own file in `internal/collector/`:
 
-- `deployment.go`, `replicaset.go`, `pod.go`
+- `deployment.go`, `replicaset.go`, `pod.go`, `workload.go`
 - `event.go`, `pvc.go`, `pv.go`, `node.go`, `service.go`, `namespace.go`
+- `references.go` — metadata-only configuration dependency resolution
+- `logs.go` — opt-in, bounded, redacted failed-container logs
 - `orchestrator.go` — coordinates the walk from a root resource
 
-Collectors return `models.CollectedResource` with a JSON snapshot of the raw API object. This snapshot feeds future analyzers without re-querying the API.
+Collectors return `models.CollectedResource` snapshots plus explicit
+`ResourceReference` records. Secret values and ConfigMap values are not
+retained. Collection has a deadline and resource budget; RBAC denials,
+truncation, and optional evidence failures produce a partial result rather than
+a false Healthy status.
 
 ## Extension Points
 
-### Phase 2: Correlator
+### Correlator and causal diagnosis
 
-The orchestrator already produces a complete `ResourceGraph`. The correlator will add explicit edges:
+The correlator adds explicit ownership, scheduling, storage, service, and
+configuration-reference edges:
 
 ```go
 type Edge struct {
     From     models.ResourceRef
     To       models.ResourceRef
-    Relation string // "owns", "schedules", "mounts", "selects"
+    Relation string // "owns", "scheduled", "mounts", "selects", "references-secret"
 }
 ```
 
-### Phase 2: Analyzer
+`internal/explain` ranks findings by severity, causal specificity, graph
+position, and event order. `Diagnosis` separates the likely root cause,
+contributing causes, and downstream symptoms and includes an evidence chain.
+
+### Analyzer
 
 Analyzers register as functions over the graph:
 
@@ -111,24 +136,30 @@ type Rule func(graph *models.ResourceGraph) []Finding
 
 Each rule detects a condition (e.g. `CrashLoopBackOff`), explains it, and suggests fixes.
 
-### Phase 2: Renderer
+### Renderer and output safety
 
-Output formatting moves from `internal/cli/output.go` to `internal/renderer/`. The CLI passes a `ResourceGraph` (and later `AnalysisResult`) to the renderer — business logic never formats strings.
+Console and explain renderers receive `TraceResult`. `--json` emits the stable
+`ktrace.dev/v1alpha1` summary schema; `--include-raw` is explicit. Every output
+path applies credential redaction.
 
 ## Error Handling
 
 - Collectors wrap API errors; `NotFound` becomes `pkg/errors.ErrNotFound`
-- CLI exits: `0` success, `1` runtime error, `2` usage/unsupported kind
+- CLI exits: `0` healthy, `2` usage, `3` findings, `4` partial/unknown, `5` API/connection error
 - All network calls accept `context.Context` for cancellation
+- Secondary evidence failures become warnings and set status to `Unknown`
 
 ## Testing
 
 - Unit tests use `client-go/fake` clientset with programmatic fixtures
 - Orchestrator integration test validates full graph collection
 - Benchmarks cover orchestrator and event collection paths
+- Kind integration scenarios cover missing config, init/probe/OOM failures, failed Jobs, and StatefulSet storage
 
 ## Security
 
 - Uses standard kubeconfig / in-cluster credentials (same as kubectl)
 - Read-only API access (list/get only, no mutations)
-- No secrets are logged or included in output beyond what the API returns
+- Secret values and service-account tokens are never retained
+- Logs are disabled by default, bounded when enabled, and redacted
+- Summary JSON omits raw objects by default

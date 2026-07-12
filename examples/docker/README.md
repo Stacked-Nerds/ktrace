@@ -96,4 +96,6 @@ spec:
             - production
 ```
 
-The `ktrace` service account needs read-only RBAC for the resources you trace (`get`, `list` on deployments, pods, events, etc.).
+The `ktrace` service account needs read-only RBAC for the resources you trace.
+Use [docs/RBAC.md](../../docs/RBAC.md) as a starting point. `pods/log` is
+optional and only required for `--logs` or `--previous-logs`.

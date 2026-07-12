@@ -57,9 +57,35 @@ type TimelineEvent struct {
 
 // ResourceGraph is the result of collecting related Kubernetes resources.
 type ResourceGraph struct {
-	Root      ResourceRef                  `json:"root"`
-	Resources map[string][]CollectedResource `json:"resources"`
-	Events    []TimelineEvent              `json:"events"`
+	Root       ResourceRef                    `json:"root"`
+	Resources  map[string][]CollectedResource `json:"resources"`
+	Events     []TimelineEvent                `json:"events"`
+	Logs       []ContainerLog                 `json:"logs,omitempty"`
+	References []ResourceReference            `json:"references,omitempty"`
+	Partial    bool                           `json:"partial,omitempty"`
+	Warnings   []string                       `json:"warnings,omitempty"`
+}
+
+// ContainerLog is a bounded, redacted log excerpt collected on request.
+type ContainerLog struct {
+	Pod        ResourceRef `json:"pod"`
+	Container  string      `json:"container"`
+	Previous   bool        `json:"previous,omitempty"`
+	Content    string      `json:"content"`
+	Truncated  bool        `json:"truncated,omitempty"`
+	Redactions int         `json:"redactions,omitempty"`
+}
+
+// ResourceReference records one configuration dependency discovered in a spec.
+type ResourceReference struct {
+	From         ResourceRef `json:"from"`
+	To           ResourceRef `json:"to"`
+	FieldPath    string      `json:"fieldPath"`
+	Key          string      `json:"key,omitempty"`
+	Optional     bool        `json:"optional,omitempty"`
+	Observed     bool        `json:"observed"`
+	TargetExists bool        `json:"targetExists"`
+	Exists       bool        `json:"exists"`
 }
 
 // NewResourceGraph creates an empty graph for the given root reference.

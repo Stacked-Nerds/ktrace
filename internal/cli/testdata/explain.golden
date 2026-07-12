@@ -1,0 +1,7 @@
+Pod/api: Failed
+Diagnosis: Container api is crash looping
+Confidence: 90%
+Evidence:
+  Pod/prod/api --exhibits--> CrashLoopBackOff
+Next actions:
+  kubectl logs api -n prod --previous

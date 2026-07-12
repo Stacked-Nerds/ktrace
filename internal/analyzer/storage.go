@@ -32,6 +32,8 @@ func analyzePVC(graph *models.ResourceGraph) []models.Finding {
 				Summary:     fmt.Sprintf("PVC %q is pending", pvc.Name),
 				Explanation: fmt.Sprintf("StorageClass %q may be missing or unable to provision volume", scName),
 				Source:      ref,
+				FieldPath:   "status.phase",
+				Category:    "Storage",
 				Recommendations: []string{
 					"kubectl get storageclass",
 					fmt.Sprintf("kubectl describe pvc %s -n %s", pvc.Name, pvc.Namespace),
@@ -56,6 +58,11 @@ func analyzeMountFailures(graph *models.ResourceGraph) []models.Finding {
 				Summary:     fmt.Sprintf("Volume issue on %s/%s", ev.Source.Kind, ev.Source.Name),
 				Explanation: ev.Message,
 				Source:      ev.Source,
+				FieldPath:   "events",
+				Category:    "Storage",
+				Evidence: []models.Evidence{{
+					Type: "Event", Message: ev.Message, Source: ev.Source, Timestamp: ev.Timestamp,
+				}},
 				Recommendations: []string{
 					fmt.Sprintf("kubectl describe %s %s -n %s", ev.Source.Kind, ev.Source.Name, ev.Source.Namespace),
 					"kubectl get storageclass",

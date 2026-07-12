@@ -1,0 +1,40 @@
+name: Kind integration
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  workload-diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.4"
+          cache: true
+
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: ktrace-e2e
+
+      - name: Build ktrace
+        run: |
+          go mod tidy
+          mkdir -p bin
+          go build -o bin/ktrace ./cmd/ktrace
+
+      - name: Run workload diagnostic scenarios
+        run: bash test/integration/run.sh
+
+      - name: Collect cluster state on failure
+        if: failure()
+        run: |
+          kubectl get all,pvc -n ktrace-e2e -o wide
+          kubectl get events -n ktrace-e2e --sort-by=.lastTimestamp

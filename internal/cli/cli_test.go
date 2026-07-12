@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/Stacked-Nerds/ktrace/internal/engine"
 	"github.com/Stacked-Nerds/ktrace/internal/kubernetes"
 	"github.com/Stacked-Nerds/ktrace/internal/renderer/console"
+	ktraceerrors "github.com/Stacked-Nerds/ktrace/pkg/errors"
 	"github.com/Stacked-Nerds/ktrace/pkg/models"
 )
 
@@ -46,6 +48,42 @@ func TestWriteJSON(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), `"status": "Healthy"`) {
 		t.Errorf("json output missing status: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), `"schemaVersion": "ktrace.dev/v1alpha1"`) {
+		t.Errorf("json output missing schema version: %s", buf.String())
+	}
+}
+
+func TestWriteJSONOmitsRawByDefaultAndRedactsIncludedRaw(t *testing.T) {
+	result := &models.TraceResult{
+		Root:   models.ResourceRef{Kind: "Pod", Name: "api", Namespace: "default"},
+		Status: models.StatusFailed,
+		Graph: models.NewResourceGraph(models.ResourceRef{
+			Kind: "Pod", Name: "api", Namespace: "default",
+		}),
+	}
+	result.Graph.AddResource(models.CollectedResource{
+		Ref: models.ResourceRef{Kind: "Secret", Name: "credentials", Namespace: "default"},
+		Raw: []byte(`{"kind":"Secret","data":{"password":"encoded-secret"}}`),
+	})
+
+	var summary bytes.Buffer
+	if err := writeJSON(&summary, result); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(summary.String(), `"raw"`) || strings.Contains(summary.String(), "encoded-secret") {
+		t.Fatalf("summary leaked raw object: %s", summary.String())
+	}
+
+	var full bytes.Buffer
+	if err := writeJSON(&full, result, true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(full.String(), "encoded-secret") {
+		t.Fatalf("full JSON leaked secret data: %s", full.String())
+	}
+	if !strings.Contains(full.String(), "[REDACTED]") {
+		t.Fatalf("full JSON missing redaction marker: %s", full.String())
 	}
 }
 
@@ -86,6 +124,62 @@ func TestRootCommandHelp(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "deployment frontend") {
 		t.Error("help text missing example")
+	}
+	if !strings.Contains(buf.String(), "--previous-logs") || !strings.Contains(buf.String(), "--timeout") {
+		t.Error("help text missing v0.3 reliability flags")
+	}
+}
+
+func TestExitCodeMapping(t *testing.T) {
+	if got := ExitCode(nil); got != exitOK {
+		t.Fatalf("nil exit code = %d", got)
+	}
+	if got := ExitCode(&exitStatusError{code: exitFindings}); got != exitFindings {
+		t.Fatalf("findings exit code = %d", got)
+	}
+	if got := ExitCode(&exitStatusError{
+		code: exitUsage,
+		cause: ktraceerrors.InvalidArgs("bad flag"),
+	}); got != exitUsage {
+		t.Fatalf("usage exit code = %d", got)
+	}
+}
+
+func TestWriteExplanationGolden(t *testing.T) {
+	pod := models.ResourceRef{Kind: "Pod", Name: "api", Namespace: "prod"}
+	finding := models.Finding{
+		Severity:  models.SeverityHigh,
+		Condition: "CrashLoopBackOff",
+		Summary:   "Container api is crash looping",
+		Source:    pod,
+		Recommendations: []string{
+			"kubectl logs api -n prod --previous",
+		},
+	}
+	result := &models.TraceResult{
+		Root:      pod,
+		Status:    models.StatusFailed,
+		Findings:  []models.Finding{finding},
+		RootCause: &finding,
+		Diagnosis: &models.Diagnosis{
+			RootCause:  &finding,
+			Confidence: 0.9,
+			EvidenceChain: []models.EvidenceStep{{
+				Source: pod, Relation: "exhibits", Condition: "CrashLoopBackOff",
+			}},
+		},
+	}
+
+	var output bytes.Buffer
+	if err := writeExplanation(&output, result); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile("testdata/explain.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != string(want) {
+		t.Fatalf("explain output mismatch\nwant:\n%s\ngot:\n%s", want, output.String())
 	}
 }
 

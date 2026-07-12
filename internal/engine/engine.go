@@ -10,7 +10,7 @@ import (
 	"github.com/Stacked-Nerds/ktrace/pkg/models"
 )
 
-// Analyze runs the full Phase 2 pipeline on a collected resource graph.
+// Analyze runs the evidence-driven diagnostic pipeline on a resource graph.
 func Analyze(graph *models.ResourceGraph) *models.TraceResult {
 	if graph == nil {
 		return nil
@@ -18,15 +18,24 @@ func Analyze(graph *models.ResourceGraph) *models.TraceResult {
 
 	findings := analyzer.Analyze(graph)
 	tl := timeline.Build(graph)
+	edges := correlator.Correlate(graph)
+	diagnosis := explain.Diagnose(graph.Root, findings, edges, tl)
+	status := explain.Status(findings)
+	if graph.Partial {
+		status = models.StatusUnknown
+	}
 
 	return &models.TraceResult{
 		Root:        graph.Root,
-		Status:      explain.Status(findings),
+		Status:      status,
 		Graph:       graph,
-		Edges:       correlator.Correlate(graph),
+		Edges:       edges,
 		Timeline:    tl,
 		Findings:    findings,
-		RootCause:   explain.RootCause(findings),
+		RootCause:   diagnosis.RootCause,
+		Diagnosis:   diagnosis,
+		Partial:     graph.Partial,
+		Warnings:    append([]string(nil), graph.Warnings...),
 		CollectedAt: time.Now().UTC(),
 	}
 }

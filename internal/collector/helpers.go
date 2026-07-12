@@ -105,3 +105,10 @@ func wrapNotFound(kind, name, namespace string, err error) error {
 func isNotFound(err error) bool {
 	return apierrors.IsNotFound(err)
 }
+
+func formatLabelSelector(selector *metav1.LabelSelector) string {
+	if selector == nil {
+		return ""
+	}
+	return metav1.FormatLabelSelector(selector)
+}

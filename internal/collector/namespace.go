@@ -41,19 +41,22 @@ func collectFromNamespaceRoot(ctx context.Context, client *kubernetes.Client, re
 
 	namespace := ref.Name
 	if err := collectDeploymentsInNamespace(ctx, client, namespace, state, namespaceResourceLimit); err != nil {
-		return err
+		state.warn(err.Error())
 	}
 	if err := collectPodsInNamespace(ctx, client, namespace, state, namespaceResourceLimit); err != nil {
-		return err
+		state.warn(err.Error())
 	}
 
 	nodeNames := podNodeNames(state.resources("Pod"))
 	if err := collectNodes(ctx, client, nodeNames, state); err != nil {
-		return err
+		state.warn(fmt.Sprintf("collect namespace Nodes: %v", err))
 	}
 
 	pvcNames := pvcNamesFromPods(state.resources("Pod"))
-	return collectPVCs(ctx, client, namespace, pvcNames, state)
+	if err := collectPVCs(ctx, client, namespace, pvcNames, state); err != nil {
+		state.warn(fmt.Sprintf("collect namespace PVCs: %v", err))
+	}
+	return nil
 }
 
 func collectDeploymentsInNamespace(ctx context.Context, client *kubernetes.Client, namespace string, state *collectState, limit int) error {
@@ -69,6 +72,9 @@ func collectDeploymentsInNamespace(ctx context.Context, client *kubernetes.Clien
 		}
 		state.add(cr)
 	}
+	if list.Continue != "" {
+		state.warn(fmt.Sprintf("namespace Deployment list truncated at %d resources", limit))
+	}
 	return nil
 }
 
@@ -83,6 +89,14 @@ func normalizeRootRef(kind, name, namespace string) (models.ResourceRef, error) 
 		k = "Pod"
 	case "namespace":
 		k = "Namespace"
+	case "statefulset":
+		k = "StatefulSet"
+	case "daemonset":
+		k = "DaemonSet"
+	case "job":
+		k = "Job"
+	case "cronjob":
+		k = "CronJob"
 	default:
 		return models.ResourceRef{}, ktraceerrors.UnsupportedKind(kind)
 	}

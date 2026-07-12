@@ -47,12 +47,23 @@ cmd/ktrace/          CLI entrypoint
 internal/cli/        Cobra commands and output formatting
 internal/kubernetes/   Kubernetes client wrapper
 internal/collector/  Resource collectors and orchestrator
+internal/correlator/ Resource relationship graph
+internal/timeline/   Chronological event builder
+internal/analyzer/   Deterministic diagnostic rules
+internal/explain/    Causal ranking and evidence chains
+internal/engine/     Analysis pipeline
+internal/renderer/   Console output
+internal/redact/     Output credential redaction
 pkg/models/          Shared domain types
 pkg/errors/          Typed errors
 pkg/utils/           Small helpers
 ```
 
-Future packages (`correlator`, `analyzer`, `timeline`, `renderer`) will be added in later phases. See [docs/Architecture.md](docs/Architecture.md).
+See [docs/Architecture.md](docs/Architecture.md) for the full pipeline.
+
+Collectors must remain read-only. Never retain Secret values or service-account
+tokens. New output paths must pass through redaction, and new network calls must
+respect cancellation and collection budgets.
 
 ## Reporting Issues
 

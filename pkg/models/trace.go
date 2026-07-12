@@ -46,6 +46,36 @@ type Finding struct {
 	Explanation     string      `json:"explanation"`
 	Source          ResourceRef `json:"source"`
 	Recommendations []string    `json:"recommendations"`
+	Category        string      `json:"category,omitempty"`
+	Container       string      `json:"container,omitempty"`
+	FieldPath       string      `json:"fieldPath,omitempty"`
+	Evidence        []Evidence  `json:"evidence,omitempty"`
+}
+
+// Evidence is one concrete observation supporting a finding.
+type Evidence struct {
+	Type      string      `json:"type"`
+	Message   string      `json:"message"`
+	Source    ResourceRef `json:"source,omitempty"`
+	Timestamp time.Time   `json:"timestamp,omitempty"`
+}
+
+// EvidenceStep describes one link from the traced root to a diagnosis.
+type EvidenceStep struct {
+	Source    ResourceRef `json:"source"`
+	Relation  string      `json:"relation,omitempty"`
+	Condition string      `json:"condition,omitempty"`
+	Summary   string      `json:"summary,omitempty"`
+}
+
+// Diagnosis separates likely causes from their downstream symptoms.
+type Diagnosis struct {
+	RootCause          *Finding       `json:"rootCause,omitempty"`
+	ContributingCauses []Finding      `json:"contributingCauses,omitempty"`
+	Symptoms           []Finding      `json:"symptoms,omitempty"`
+	Context            []Finding      `json:"context,omitempty"`
+	Confidence         float64        `json:"confidence"`
+	EvidenceChain      []EvidenceStep `json:"evidenceChain,omitempty"`
 }
 
 // TraceResult is the full output of a ktrace analysis.
@@ -57,5 +87,8 @@ type TraceResult struct {
 	Timeline    []TimelineEntry `json:"timeline"`
 	Findings    []Finding       `json:"findings"`
 	RootCause   *Finding        `json:"rootCause,omitempty"`
+	Diagnosis   *Diagnosis      `json:"diagnosis,omitempty"`
+	Partial     bool            `json:"partial,omitempty"`
+	Warnings    []string        `json:"warnings,omitempty"`
 	CollectedAt time.Time       `json:"collectedAt"`
 }

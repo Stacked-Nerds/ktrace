@@ -3,9 +3,11 @@ package console
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/Stacked-Nerds/ktrace/internal/explain"
+	"github.com/Stacked-Nerds/ktrace/internal/redact"
 	"github.com/Stacked-Nerds/ktrace/pkg/models"
 	"github.com/Stacked-Nerds/ktrace/pkg/utils"
 )
@@ -41,11 +43,22 @@ func Render(w io.Writer, result *models.TraceResult, opts Options) error {
 		fmt.Fprintf(w, "Namespace: %s\n", result.Root.Namespace)
 	}
 	fmt.Fprintf(w, "Status: %s\n", result.Status)
+	if result.Partial {
+		fmt.Fprintln(w, "Evidence: Partial")
+	}
 	fmt.Fprintln(w, sep)
 	fmt.Fprintln(w)
 
+	if len(result.Warnings) > 0 {
+		fmt.Fprintln(w, "Warnings:")
+		for _, warning := range result.Warnings {
+			fmt.Fprintf(w, "  %s\n", safeText(warning))
+		}
+		fmt.Fprintln(w)
+	}
+
 	if len(result.Findings) > 0 {
-		fmt.Fprintln(w, "Critical Issues:")
+		fmt.Fprintln(w, "Findings:")
 		limit := opts.MaxFindings
 		if limit <= 0 {
 			limit = len(result.Findings)
@@ -57,9 +70,9 @@ func Render(w io.Writer, result *models.TraceResult, opts Options) error {
 			}
 			icon := severityIcon(f.Severity)
 			src := formatSource(f.Source)
-			fmt.Fprintf(w, "  %s [%s] %s — %s\n", icon, f.Condition, src, f.Summary)
+			fmt.Fprintf(w, "  %s [%s] %s — %s\n", icon, f.Condition, src, safeText(f.Summary))
 			if opts.Verbose && f.Explanation != "" {
-				fmt.Fprintf(w, "      %s\n", utils.Truncate(f.Explanation, 120))
+				fmt.Fprintf(w, "      %s\n", utils.Truncate(safeText(f.Explanation), 120))
 			}
 		}
 		fmt.Fprintln(w)
@@ -79,7 +92,7 @@ func Render(w io.Writer, result *models.TraceResult, opts Options) error {
 			ts := entry.Timestamp.Format("15:04")
 			line := entry.Title
 			if entry.Detail != "" {
-				line = fmt.Sprintf("%s — %s", entry.Title, utils.Truncate(entry.Detail, 80))
+				line = fmt.Sprintf("%s — %s", entry.Title, utils.Truncate(safeText(entry.Detail), 80))
 			}
 			fmt.Fprintf(w, "  %s  %s\n", ts, line)
 		}
@@ -89,9 +102,25 @@ func Render(w io.Writer, result *models.TraceResult, opts Options) error {
 	if result.RootCause != nil {
 		fmt.Fprintln(w, sep)
 		fmt.Fprintln(w, "Root Cause")
-		fmt.Fprintf(w, "%s\n", result.RootCause.Summary)
+		fmt.Fprintf(w, "%s\n", safeText(result.RootCause.Summary))
+		if result.Diagnosis != nil {
+			fmt.Fprintf(w, "Confidence: %.0f%%\n", result.Diagnosis.Confidence*100)
+		}
 		if result.RootCause.Explanation != "" {
-			fmt.Fprintf(w, "%s\n", utils.Truncate(result.RootCause.Explanation, 200))
+			fmt.Fprintf(w, "%s\n", utils.Truncate(safeText(result.RootCause.Explanation), 200))
+		}
+		if opts.Verbose && result.Diagnosis != nil && len(result.Diagnosis.EvidenceChain) > 0 {
+			fmt.Fprintln(w, "Evidence chain:")
+			for _, step := range result.Diagnosis.EvidenceChain {
+				fmt.Fprintf(w, "  %s", step.Source.String())
+				if step.Relation != "" {
+					fmt.Fprintf(w, " --%s-->", step.Relation)
+				}
+				if step.Condition != "" {
+					fmt.Fprintf(w, " %s", step.Condition)
+				}
+				fmt.Fprintln(w)
+			}
 		}
 		fmt.Fprintln(w, sep)
 		fmt.Fprintln(w, "Recommendation")
@@ -105,11 +134,30 @@ func Render(w io.Writer, result *models.TraceResult, opts Options) error {
 				fmt.Fprintf(w, "  ... and %d more commands\n", len(recs)-limit)
 				break
 			}
-			fmt.Fprintf(w, "  %s\n", rec)
+			fmt.Fprintf(w, "  %s\n", safeText(rec))
 		}
 		fmt.Fprintln(w)
 	} else if result.Status == models.StatusHealthy {
 		fmt.Fprintln(w, "No failure conditions detected.")
+		fmt.Fprintln(w)
+	} else if result.Status == models.StatusUnknown {
+		fmt.Fprintln(w, "Unable to determine health because required evidence was incomplete.")
+		fmt.Fprintln(w)
+	}
+
+	if result.Graph != nil && len(result.Graph.Logs) > 0 {
+		fmt.Fprintln(w, "Failure Logs (redacted):")
+		for _, log := range result.Graph.Logs {
+			label := "current"
+			if log.Previous {
+				label = "previous"
+			}
+			fmt.Fprintf(w, "  %s/%s [%s]\n", log.Pod.Name, log.Container, label)
+			fmt.Fprintf(w, "    %s\n", strings.ReplaceAll(utils.Truncate(safeText(log.Content), 1200), "\n", "\n    "))
+			if log.Truncated {
+				fmt.Fprintln(w, "    …[log truncated]")
+			}
+		}
 		fmt.Fprintln(w)
 	}
 
@@ -125,7 +173,11 @@ func renderCollected(w io.Writer, graph *models.ResourceGraph) {
 		return
 	}
 	fmt.Fprintln(w, "Collected:")
-	kinds := []string{"Deployment", "ReplicaSet", "Pod", "PersistentVolumeClaim", "PersistentVolume", "Node", "Service"}
+	kinds := make([]string, 0, len(graph.Resources))
+	for kind := range graph.Resources {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
 	for _, kind := range kinds {
 		if n := graph.Count(kind); n > 0 {
 			fmt.Fprintf(w, "  %-22s %d\n", kind+":", n)
@@ -153,6 +205,11 @@ func severityIcon(s models.Severity) string {
 	default:
 		return "[LOW]"
 	}
+}
+
+func safeText(value string) string {
+	value, _ = redact.Text(value)
+	return value
 }
 
 // RenderCompact writes a one-line status summary.

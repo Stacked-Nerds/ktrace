@@ -29,8 +29,15 @@ func TestAnalyzePVCPending(t *testing.T) {
 	if len(findings) == 0 {
 		t.Fatal("expected PVC pending finding")
 	}
-	if findings[0].Condition != "PVCPending" {
-		t.Fatalf("unexpected condition: %s", findings[0].Condition)
+	found := false
+	for _, finding := range findings {
+		if finding.Condition == "PVCPending" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected PVCPending condition")
 	}
 }
 

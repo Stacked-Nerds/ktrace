@@ -2,7 +2,7 @@ package analyzer
 
 import (
 	"fmt"
-	"strings"
+	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -71,10 +71,19 @@ func analyzeDeploymentConditions(graph *models.ResourceGraph) []models.Finding {
 }
 
 func dedupeFindings(findings []models.Finding) []models.Finding {
+	sort.SliceStable(findings, func(i, j int) bool {
+		left := findings[i]
+		right := findings[j]
+		leftKey := left.Condition + "|" + left.Source.String() + "|" + left.Container + "|" +
+			left.FieldPath + "|" + left.Summary + "|" + left.Explanation
+		rightKey := right.Condition + "|" + right.Source.String() + "|" + right.Container + "|" +
+			right.FieldPath + "|" + right.Summary + "|" + right.Explanation
+		return leftKey < rightKey
+	})
 	seen := make(map[string]bool)
 	out := make([]models.Finding, 0, len(findings))
 	for _, f := range findings {
-		key := f.Condition + "|" + f.Source.String()
+		key := f.Condition + "|" + f.Source.String() + "|" + f.Container + "|" + f.FieldPath
 		if seen[key] {
 			continue
 		}
@@ -82,15 +91,4 @@ func dedupeFindings(findings []models.Finding) []models.Finding {
 		out = append(out, f)
 	}
 	return out
-}
-
-func labelSelectorString(labels map[string]string) string {
-	if len(labels) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(labels))
-	for k, v := range labels {
-		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
-	}
-	return strings.Join(parts, ",")
 }

@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"encoding/json"
+	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -18,6 +19,7 @@ func Analyze(graph *models.ResourceGraph) []models.Finding {
 	for _, rule := range rules {
 		findings = append(findings, rule(graph)...)
 	}
+	findings = dedupeFindings(findings)
 	sortFindings(findings)
 	return findings
 }
@@ -29,6 +31,9 @@ var rules = []Rule{
 	analyzeMountFailures,
 	analyzeNodes,
 	analyzeDeploymentConditions,
+	analyzeReferences,
+	analyzeRollouts,
+	analyzeWorkloadConditions,
 }
 
 func decodePod(raw []byte) (*corev1.Pod, error) {
@@ -70,11 +75,18 @@ func sortFindings(findings []models.Finding) {
 		models.SeverityMedium:   2,
 		models.SeverityLow:      3,
 	}
-	for i := 1; i < len(findings); i++ {
-		j := i
-		for j > 0 && order[findings[j].Severity] < order[findings[j-1].Severity] {
-			findings[j], findings[j-1] = findings[j-1], findings[j]
-			j--
+	sort.SliceStable(findings, func(i, j int) bool {
+		left, right := findings[i], findings[j]
+		if order[left.Severity] != order[right.Severity] {
+			return order[left.Severity] < order[right.Severity]
 		}
-	}
+		leftKey := left.Source.Kind + "|" + left.Source.Namespace + "|" + left.Source.Name + "|" +
+			left.Condition + "|" + left.Container + "|" + left.FieldPath + "|" + left.Summary
+		rightKey := right.Source.Kind + "|" + right.Source.Namespace + "|" + right.Source.Name + "|" +
+			right.Condition + "|" + right.Container + "|" + right.FieldPath + "|" + right.Summary
+		if leftKey == rightKey {
+			return left.Explanation < right.Explanation
+		}
+		return leftKey < rightKey
+	})
 }

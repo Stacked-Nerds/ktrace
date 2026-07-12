@@ -28,7 +28,18 @@ func (c *podCollector) Collect(ctx context.Context, client *kubernetes.Client, r
 }
 
 func collectFromPodRoot(ctx context.Context, client *kubernetes.Client, ref models.ResourceRef, state *collectState) error {
-	return collectPod(ctx, client, ref, state)
+	if err := collectPod(ctx, client, ref, state); err != nil {
+		return err
+	}
+	for _, pod := range state.resources("Pod") {
+		if pod.Ref.Name == ref.Name && pod.Ref.Namespace == ref.Namespace {
+			if err := collectOwnersForPod(ctx, client, pod, state); err != nil {
+				state.warn(fmt.Sprintf("collect Pod owner chain: %v", err))
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 func collectPodsInNamespace(ctx context.Context, client *kubernetes.Client, namespace string, state *collectState, limit int) error {
@@ -43,6 +54,9 @@ func collectPodsInNamespace(ctx context.Context, client *kubernetes.Client, name
 			return err
 		}
 		state.add(cr)
+	}
+	if list.Continue != "" {
+		state.warn(fmt.Sprintf("namespace Pod list truncated at %d resources", limit))
 	}
 	return nil
 }

@@ -20,7 +20,12 @@ func Build(graph *models.ResourceGraph) []models.TimelineEntry {
 	entries = append(entries, eventEntries(graph.Events)...)
 
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Timestamp.Before(entries[j].Timestamp)
+		if !entries[i].Timestamp.Equal(entries[j].Timestamp) {
+			return entries[i].Timestamp.Before(entries[j].Timestamp)
+		}
+		left := entries[i].Source.String() + "|" + entries[i].Title + "|" + entries[i].Detail
+		right := entries[j].Source.String() + "|" + entries[j].Title + "|" + entries[j].Detail
+		return left < right
 	})
 
 	return dedupe(entries)
@@ -28,7 +33,15 @@ func Build(graph *models.ResourceGraph) []models.TimelineEntry {
 
 func resourceLifecycleEntries(graph *models.ResourceGraph) []models.TimelineEntry {
 	entries := make([]models.TimelineEntry, 0)
-	kindOrder := []string{"Namespace", "Deployment", "ReplicaSet", "PersistentVolumeClaim", "PersistentVolume", "Pod", "Service", "Node"}
+	kindOrder := []string{
+		"Namespace",
+		"CronJob", "Job",
+		"Deployment", "ReplicaSet", "StatefulSet", "DaemonSet",
+		"Pod", "Service",
+		"ConfigMap", "Secret", "ServiceAccount",
+		"PersistentVolumeClaim", "StorageClass", "PersistentVolume",
+		"Node",
+	}
 
 	for _, kind := range kindOrder {
 		for _, r := range graph.Resources[kind] {

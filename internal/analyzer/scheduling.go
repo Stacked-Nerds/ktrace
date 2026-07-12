@@ -29,6 +29,8 @@ func analyzeScheduling(graph *models.ResourceGraph) []models.Finding {
 					Source: models.ResourceRef{
 						Kind: "Pod", Name: pod.Name, Namespace: pod.Namespace,
 					},
+					FieldPath: "status.conditions[PodScheduled]",
+					Category:  "Scheduling",
 					Recommendations: []string{
 						fmt.Sprintf("kubectl describe pod %s -n %s", pod.Name, pod.Namespace),
 						"kubectl get nodes",
@@ -49,6 +51,11 @@ func analyzeScheduling(graph *models.ResourceGraph) []models.Finding {
 			Summary:     fmt.Sprintf("%s/%s scheduling failed", ev.Source.Kind, ev.Source.Name),
 			Explanation: ev.Message,
 			Source:      ev.Source,
+			FieldPath:   "status.conditions[PodScheduled]",
+			Category:    "Scheduling",
+			Evidence: []models.Evidence{{
+				Type: "Event", Message: ev.Message, Source: ev.Source, Timestamp: ev.Timestamp,
+			}},
 			Recommendations: []string{
 				fmt.Sprintf("kubectl describe %s %s -n %s", ev.Source.Kind, ev.Source.Name, ev.Source.Namespace),
 				"kubectl get nodes",
